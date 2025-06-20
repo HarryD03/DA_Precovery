@@ -1,6 +1,8 @@
 import numpy as np
-
-
+from typing import Callable, List, Union, overload, Tuple
+from daceypy import DA, array
+import daceypy.op as op
+from numpy.typing import NDArray
 
 def J0(y,m,d) -> float:
     """
@@ -26,8 +28,9 @@ def zeroTo360(theta: float) -> float:
     :return: normalized angle between 0 and 360 degrees
     """
     result = np.mod(theta, 360)
-    if result == 0 and theta != 0:
-        result = 360
+    # Special case: if theta is exactly a multiple of 360 (including 360 itself), return 360.0
+    if np.isclose(result, 0.0) and theta > 0:
+        return 360.0
     return result
 
 def LST(y: float, m: float, d: float, ut: float, EL: float) -> float:
@@ -72,5 +75,35 @@ def equatorial_to_eclipitcJ2000(dr: float, lst: float, h_e: float) -> float:
         [0, -np.sin(np.deg2rad(di)), np.cos(np.deg2rad(di))]
     ])
 
-    r_obs_ec = np.cross(R, r_obs_eq)
+    r_obs_ec = np.dot(R, r_obs_eq)
     return r_obs_ec
+
+def create_da_los_vectors(ra: Union[array, NDArray], dec: Union[array, NDArray]) -> Union[array, NDArray]:
+    """
+    Calculate the line of sight unit vectors for the given right ascension and declination.
+    Run this when the Nomial solution of RA and DEC is known.
+    Run again if Nomial solution changes.
+
+    N represents the number of observations, and each observation is represented by a pair of right ascension (RA) and declination (DEC).
+    :param ra:
+        1xN array of right ascension angles (radians) in the range [0; 2pi].
+    :param dec:
+        1xN array of declination angles (radians) in the range [-pi/2, pi/2].
+    :return:
+        3XN array of LOS vectors. column strucutre: [ρ̂x, ρ̂y, ρ̂z]ᵢ. Row index corresponds to observation instance, and it repreats for N observations
+    """
+    assert ra.shape[0] == 1, "RA must be a row vector"
+    assert dec.shape[0] == 1, "DEC must be a row vector"
+    assert ra.shape[1] == dec.shape[1], "Number of RA and DEC observations must match"
+
+    num_obs = ra.shape[1]
+    los_vectors = np.empty((3, num_obs), dtype=object)
+
+    for i in range(num_obs):
+        los_vectors[:,i] = array([
+            op.cos(dec[0,i]) * op.cos(ra[0,i]),
+            op.cos(dec[0,i]) * op.sin(ra[0,i]),
+            op.sin(dec[0,i])
+        ])
+
+    return los_vectors

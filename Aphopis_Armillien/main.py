@@ -168,36 +168,36 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
     #   Pos_obs: 2D array of Observer positions in Heliocentric frame of reference from angle rotation matrix
     #           Rows are compoents, columns are observations instances
     #   t: 1D array of times in seconds
-    #   obs_dir: 1D array of unit vectors pointing from observer to the point of interest
+    #   obs_dir: 2D array of unit vectors pointing from observer to the point of interest, every column is an observation instance the rows are components x y z
     # 2-BP assumption:
     #   Assume the observations lie on the same plane
     mu = 1.32712440018e11               #Suns gravitional parameter
     dt_1 = t[1] - t[0]
-    dt_3 = t[2] = t[1]
+    dt_3 = t[2] - t[1]
     dt = dt_3 - dt_1
 
-    p1 = obs_dir[1].cross(obs_dir[2])
-    p2 = obs_dir[1].cross(obs_dir[2])
-    p3 = obs_dir[0].cross(obs_dir[1])
+    p1 = obs_dir[1,:].cross(obs_dir[2,:])
+    p2 = obs_dir[1,:].cross(obs_dir[2,:])
+    p3 = obs_dir[0,:].cross(obs_dir[1,:])
 
-    D0 = obs_dir[0].dot(p1)
-    D11 = pos_obs[0].dot(p1)
-    D12 = pos_obs[0].dot(p2)
-    D13 = pos_obs[0].dot(p3)
-    D21 = pos_obs[1].dot(p1)
-    D22 = pos_obs[1].dot(p2)
-    D23 = pos_obs[1].dot(p3)
-    D31 = pos_obs[2].dot(p1)
-    D32 = pos_obs[2].dot(p2)
-    D33 = pos_obs[2].dot(p3)
+    D0 = obs_dir[0,:].dot(p1)
+    D11 = pos_obs[0,:].dot(p1)
+    D12 = pos_obs[0,:].dot(p2)
+    D13 = pos_obs[0,:].dot(p3)
+    D21 = pos_obs[1,:].dot(p1)
+    D22 = pos_obs[1,:].dot(p2)
+    D23 = pos_obs[1,:].dot(p3)
+    D31 = pos_obs[2,:].dot(p1)
+    D32 = pos_obs[2,:].dot(p2)
+    D33 = pos_obs[2,:].dot(p3)
 
     A = 1 / D0 * ((-D12 * dt_3/ dt) + D22 + (D32 * dt_1/dt))
     B = 1 / (6*D0) * (D12*(dt_3**2 - dt**2)*dt_3/dt + (D32*(dt**2 - dt_1**2) * dt_1/dt))
-    E = pos_obs[1].dot(obs_dir[1])
-    R_2_squared = pos_obs[1].dot(pos_obs[1])
+    E = pos_obs[1,:].dot(obs_dir[1,:])
+    R_2_squared = pos_obs[1,:].dot(pos_obs[1,:])
 
     #obtain coefficient values for the 8th degree position polynomial
-    a = -1 * (A**2 + 2*A*E + (op.R_2_squared.sqr()))
+    a = -1 * (A**2 + 2*A*E + (R_2_squared**2))
     b = -2*mu*B*(A+E)
     c = -1 * (mu**2 * B**2)
 
@@ -234,25 +234,32 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
 
         r_1 = np.zeros(len(real_roots)).T
         r_3 = np.zeros(len(real_roots)).T
+
+        print(f"There are {len(real_roots)} positive real roots:\n")
+
         for i in range(len(real_roots)):
             print(f"Root {i}: {r_2[i]}\n")
-            # build range1,range2,range3 and conduct feasibility tests.
-            # Ranges are defined through truncated Lagragne coefficients so they're not accuarate and refinement required
+            # build range1, range2, range3 and conduct feasibility tests.
+            # Ranges are defined through truncated Lagrange coefficients so they're not accurate and refinement required
+            
+            # Calculate the r1 
             num = (6*(D31 * (dt_1/dt_3) + D21 * (dt/dt_3))*(r_2[i]**3)) + (mu * D31 * (dt**2 - dt_1**2)* (dt_1/dt_3))
             den = (6 * r_2[i]**3) + (mu * (dt**2 - dt_3**2))
             range_1[i] = 1 / D0 * ( (num / den) - D11)
 
+            # Calculate the r3
             num = (6*(D13 * (dt_3/dt_1) + D23 * (dt/dt_1))*(r_2[i]**3)) + (mu * D13 * (dt**2 - dt_3**2)* (dt_3/dt_1))
             den = (6 * r_2[i]**3) + (mu * (dt**2 - dt_3**2))
             range_3[i] = 1 / D0 * ((num / den) -D33)
 
-            range_2[i] = A + (mu * B) / (r_2 ** 3)
+            # Calculate the r2
+            range_2[i] = A + (mu * B) / (r_2[i] ** 3)
 
             # calculate r1, r3
-            r_1[i] = pos_obs[0] + range_1*obs_dir[0]
-            r_3[i] = pos_obs[2] + range_2*obs_dir[2]
+            r_1[i] = pos_obs[0,:] + range_1[i]*obs_dir[0,:]
+            r_3[i] = pos_obs[2,:] + range_2[i]*obs_dir[2,:]
 
-            #Assess the 3 positions for feasibility
+            #Assess the 3 positions for feasibility - 
 
             #Test 1: ranges > 0
 
@@ -264,18 +271,20 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
         num = (6 * (D31 * (dt_1 / dt_3) + D21 * (dt / dt_3)) * (r_2 ** 3)) + (
                     mu * D31 * (dt ** 2 - dt_1 ** 2) * (dt_1 / dt_3))
         den = (6 * r_2 ** 3) + (mu * (dt ** 2 - dt_3 ** 2))
+        
         range_1 = 1 / D0 * ((num / den) - D11)
 
         num = (6 * (D13 * (dt_3 / dt_1) + D23 * (dt / dt_1)) * (r_2 ** 3)) + (
                     mu * D13 * (dt ** 2 - dt_3 ** 2) * (dt_3 / dt_1))
         den = (6 * r_2 ** 3) + (mu * (dt ** 2 - dt_3 ** 2))
+        
         range_3 = 1 / D0 * ((num / den) - D33)
 
         range_2 = A + (mu * B) / (r_2 ** 3)
 
         # calculate r1, r3
-        r_1 = pos_obs[0] + range_1 * obs_dir[0]
-        r_3 = pos_obs[2] + range_2 * obs_dir[2]
+        r_1 = pos_obs[0,:] + range_1 * obs_dir[0,:]
+        r_3 = pos_obs[2,:] + range_2 * obs_dir[2,:]
 
     #obtain the [r1,r2,r3] [range1,range2,range3]. Rows are the real root, columns are positions
     position = [r_1,r_2,r_3]
