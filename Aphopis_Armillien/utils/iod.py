@@ -34,25 +34,25 @@ def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
     # expand series for f and g
     f_series = np.array([1.0,                                           #0th order
                         0.0,                                           #1st order
-                        (mu/(2*r0_norm**3))*dt**2,                     #2nd order
+                        -(mu/(2*r0_norm**3))*dt**2,                     #2nd order
                         (mu/2*(np.dot(r0,v0))/r0_norm**5) * dt**3,     #3rd order                                      #3rd order
                         (mu/24 * (-2*mu/r0_norm**6) + 3*v0_norm**2/r0_norm**6 - 15*(np.dot(r0,v0))/r0_norm**7) * dt**4])  #4th order                                         #4th order
 
     g_series = np.array([0.0,                                           #0th order
                          dt,                                            #1st order 
                          0.0,                                           #2nd order
-                         1/6 * (mu/r0_norm**3) * dt**3,                 #3rd order
+                         -1/6 * (mu/r0_norm**3) * dt**3,                 #3rd order
                          mu/4 * (np.dot(r0,v0)/ r0_norm**5) * dt**4])   #4th order
 
     # Ensure the series are of the correct order
     if f_order < len(f_series):
-        f_series = f_series[:f_order]
+        f_series = f_series[:f_order+1]
 
     f_series = f_series.sum()
 
 
     if g_order < len(g_series):
-        g_series = g_series[:g_order]
+        g_series = g_series[:g_order+1]
     
     g_series = g_series.sum()
 

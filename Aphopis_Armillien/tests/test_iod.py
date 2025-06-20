@@ -256,32 +256,16 @@ def test_f_g_series_IOD():
 #Performance tests (textbook examples)
 
 def test_f_g_series_IOD_typical():
-    # Textbook example with typical values - Orbital mechancis for Engineering Students Ex:
+    # Textbook example with typical values - Orbital mechancis for Engineering Students Ex: 5: Guass example
     # IOD as no v0 is provided
-    r0 = np.array([1.0e8, 0.0, 0.0])
-    dt = 1000.0
-    f_order = 3
+    r0 = np.array([5659.1, 6533.8, 3270.1])
+    dt = -118.10
+    f_order = 2
     g_order = 3
-    f, g = f_g_series(r0, dt, f_order, g_order)
+    f, g = f_g_series(r0, dt, f_order, g_order, mu=3.986e5)
     # Should return valid f and g values
     # Replace 1.234 with the textbook value you want to check against
-    f_textbook_value = 1.234
-    g_textbook_value = 1.234  
-    assert np.isclose(f, f_textbook_value, rtol=1e-6), f"Expected {f_textbook_value}, got {f}"
-    assert np.isclose(g, g_textbook_value, rtol=1e-6), f"Expected {g_textbook_value}, got {g}"
-
-def test_f_g_series_textbook_example():
-    # Textbook example with typical values - Orbital mechanics for Engineering Students Ex:
-    # v0 is provided
-    r0 = np.array([1.0e8, 0.0, 0.0])
-    v0 = np.array([0.0, 1.0e3, 0.0])  # Nonzero velocity vector
-    dt = 1000.0
-    f_order = 3
-    g_order = 3
-    f, g = f_g_series(r0, dt, f_order, g_order, v0=v0)
-    # Should return valid f and g values
-    # Replace 1.234 with the textbook value you want to check against
-    f_textbook_value = 1.234
-    g_textbook_value = 1.234  
-    assert np.isclose(f, f_textbook_value, rtol=1e-6), f"Expected {f_textbook_value}, got {f}"
-    assert np.isclose(g, g_textbook_value, rtol=1e-6), f"Expected {g_textbook_value}, got {g}"
+    f_textbook_value = 0.99648
+    g_textbook_value = -117.97
+    assert np.isclose(f, f_textbook_value, rtol=1e-3), f"Expected {f_textbook_value}, got {f}"
+    assert np.isclose(g, g_textbook_value, rtol=1e-3), f"Expected {g_textbook_value}, got {g}"
