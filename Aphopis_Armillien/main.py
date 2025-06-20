@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 
 from time import perf_counter
 #Aphopis Armillien Script
+
 def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], Re: float = 6378.137) -> bool:
     """
     Check if the Guass IOD positions are physically feasible.
