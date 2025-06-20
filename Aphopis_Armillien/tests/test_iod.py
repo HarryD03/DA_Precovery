@@ -205,26 +205,20 @@ def test_Guass_8th_seed_no_real_roots():
             with pytest.raises(AssertionError):
                 f_g_series(r0, dt, 3, 3)
 
-def test_f_g_series_invalid_v0():
-    # Provide a v0 that is not a 3D vector
-    r0 = np.array([1.0e8, 0.0, 0.0])
-    v0 = np.array([1.0, 2.0])  # Invalid shape
-    dt = 1000.0
-    with pytest.raises(AssertionError):
-        f_g_series(r0, dt, 3, 3, v0=v0)
+
+# Functional tests 
 
 def test_f_g_series_v0_zero_vector():
-    # Provide a v0 that is a zero vector
+    # Provide a v0 that is a zero vector - see if works with no velcoity
     r0 = np.array([1.0e8, 0.0, 0.0])
     v0 = np.zeros(3)  # Zero vector
     dt = 1000.0
-    f_order = 3
-    g_order = 3
+    f_order = 4
+    g_order = 4
     f, g = f_g_series(r0, dt, f_order, g_order, v0=v0)
     # Should still return valid f and g values
     assert isinstance(f, float)
     assert isinstance(g, float)
-    assert f == 1.0  # 0th order term should be 1.0
 
 def test_f_g_series_v0_nonzero_vector():
     # Provide a nonzero v0
@@ -234,32 +228,60 @@ def test_f_g_series_v0_nonzero_vector():
     f_order = 5
     g_order = 5
     f, g = f_g_series(r0, dt, f_order, g_order, v0=v0)
-    assert isinstance(f, np.ndarray)
-    assert isinstance(g, np.ndarray)
-    assert f.shape == (5,)
-    assert g.shape == (5,)
-    # Check if the higher order terms are affected by v0
-    assert not np.allclose(f[3], 0)
-    assert not np.allclose(g[4], 0)
+    assert isinstance(f, Union[float,int])
+    assert isinstance(g, Union[float,int])
 
 def test_f_g_series_v0_invalid_shape():
     # Provide a v0 that is not a 3D vector
+
     r0 = np.array([1.0e8, 0.0, 0.0])
     v0 = np.array([1.0, 2.0])  # Invalid shape
     dt = 1000.0
     with pytest.raises(AssertionError):
         f_g_series(r0, dt, 3, 3, v0=v0)
 
-def test_f_g_series_v0_zero_vector():
-    # Provide a v0 that is a zero vector
+def test_f_g_series_IOD():
+    # Provide no v0 vector - see if v0 is None part works.
     r0 = np.array([1.0e8, 0.0, 0.0])
-    v0 = np.zeros(3)  # Zero vector
+    dt = 1000.0
+    f_order = 2
+    g_order = 3
+    f, g = f_g_series(r0, dt, f_order, g_order)
+
+    # Should still return valid f and g values
+    assert isinstance(f, float)
+    assert isinstance(g, float)
+
+# ---------------------------------------------------------------------
+#Performance tests (textbook examples)
+
+def test_f_g_series_IOD_typical():
+    # Textbook example with typical values - Orbital mechancis for Engineering Students Ex:
+    # IOD as no v0 is provided
+    r0 = np.array([1.0e8, 0.0, 0.0])
+    dt = 1000.0
+    f_order = 3
+    g_order = 3
+    f, g = f_g_series(r0, dt, f_order, g_order)
+    # Should return valid f and g values
+    # Replace 1.234 with the textbook value you want to check against
+    f_textbook_value = 1.234
+    g_textbook_value = 1.234  
+    assert np.isclose(f, f_textbook_value, rtol=1e-6), f"Expected {f_textbook_value}, got {f}"
+    assert np.isclose(g, g_textbook_value, rtol=1e-6), f"Expected {g_textbook_value}, got {g}"
+
+def test_f_g_series_textbook_example():
+    # Textbook example with typical values - Orbital mechanics for Engineering Students Ex:
+    # v0 is provided
+    r0 = np.array([1.0e8, 0.0, 0.0])
+    v0 = np.array([0.0, 1.0e3, 0.0])  # Nonzero velocity vector
     dt = 1000.0
     f_order = 3
     g_order = 3
     f, g = f_g_series(r0, dt, f_order, g_order, v0=v0)
-    # Should still return valid f and g values
-    assert isinstance(f, float)
-    assert isinstance(g, float)
-    assert f == 1.0  # 0th order term should be 1.0
-    assert g == 0.0  # 0th order term should be 0.0
+    # Should return valid f and g values
+    # Replace 1.234 with the textbook value you want to check against
+    f_textbook_value = 1.234
+    g_textbook_value = 1.234  
+    assert np.isclose(f, f_textbook_value, rtol=1e-6), f"Expected {f_textbook_value}, got {f}"
+    assert np.isclose(g, g_textbook_value, rtol=1e-6), f"Expected {g_textbook_value}, got {g}"

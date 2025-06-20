@@ -15,18 +15,16 @@ def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
     :param mu: Standard gravitational parameter (default is the Sun's)
     :return: f_series, g_series - numpy arrays of the f and g series coefficients
     """
-    assert isinstance(r0, (array, NDArray)), "r0 must be a numpy array or daceypy array"
     assert r0.ndim == 1 and r0.shape[0] == 3, "r0 must be a 1D column vector with 3 components"
+    assert v0 is None or (v0.ndim == 1 and v0.shape[0] == 3), "v0 must be a 1D column vector with 3 components or None"
     assert isinstance(dt, (int, float)), "dt must be a number"
     assert isinstance(f_order, int) and f_order >= 0, "f_order must be a non-negative integer"
     assert isinstance(g_order, int) and g_order >= 0, "g_order must be a non-negative integer"
 
-    # Initialize f and g series arrays
-    f_series = np.zeros(f_order, dtype=np.float64)
-    g_series = np.zeros(g_order, dtype=np.float64)
 
     # Calculate the norm of the initial position vector
     r0_norm = np.linalg.norm(r0)
+    v0_norm = np.linalg.norm(v0) if v0 is not None else 0.0
     assert r0_norm > 0, "Initial position vector r0 must not be zero"
     
     # Precompute the An, Bn and M - do later for general case
@@ -35,10 +33,10 @@ def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
     
     # expand series for f and g
     f_series = np.array([1.0,                                           #0th order
-                         0.0,                                           #1st order
-                         (mu/(2*r0_norm**3))*dt**2,                     #2nd order
-                         (mu/2*(np.dot(r0,v0))/r0_norm**5) * dt**3,     #3rd order                                      #3rd order
-                         (mu/24 * (-2*mu/r0_norm**6) + 3*v0**2/r0_norm**6 - 15*(np.dot(r0,v0))/r0_norm**7) * dt**4])  #4th order                                         #4th order
+                        0.0,                                           #1st order
+                        (mu/(2*r0_norm**3))*dt**2,                     #2nd order
+                        (mu/2*(np.dot(r0,v0))/r0_norm**5) * dt**3,     #3rd order                                      #3rd order
+                        (mu/24 * (-2*mu/r0_norm**6) + 3*v0_norm**2/r0_norm**6 - 15*(np.dot(r0,v0))/r0_norm**7) * dt**4])  #4th order                                         #4th order
 
     g_series = np.array([0.0,                                           #0th order
                          dt,                                            #1st order 
@@ -49,12 +47,14 @@ def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
     # Ensure the series are of the correct order
     if f_order < len(f_series):
         f_series = f_series[:f_order]
-        f_series = f_series.sum()
+
+    f_series = f_series.sum()
 
 
     if g_order < len(g_series):
         g_series = g_series[:g_order]
-        g_series = g_series.sum()
+    
+    g_series = g_series.sum()
 
     return f_series, g_series
 
