@@ -437,10 +437,10 @@ def battin_x_DA(r1_da: Union[array,NDArray], r2_da: Union[array,NDArray], dt: fl
 
     return x_da
 
-def battin_vel_DA(r1: DA, r2: DA, a: DA, dE: DA, dt: float, mu: float) -> DA:
+def battin_vel_DA(r1: Union[array,NDArray], r2: Union[array,NDArray], a: Union[DA,float], dE: Union[DA,float], dt: float, mu: float) -> DA:
     """
-    :param r1: 3-vector initial position vector (DA series)
-    :param r2: 3-vector final position vector (DA series)
+    :param r1: 3-vector initial position vector (DA series or real array)
+    :param r2: 3-vector final position vector (DA series or real array)
     :param a: Semi major axis DA series
     :param dE: dE = alpha - beta
     :param dt: tof (float)

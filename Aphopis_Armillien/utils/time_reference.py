@@ -39,7 +39,7 @@ def LST(y: float, m: float, d: float, ut: float, EL: float) -> float:
     :param y: year
     :param m: month
     :param d: day
-    :param ut: universal time (hours)
+    :param ut: universal time [hours, minutes, seconds]
     :param EL: east longitude (degrees)
     :return:
     Local sideral time: lst (degrees)
@@ -50,12 +50,14 @@ def LST(y: float, m: float, d: float, ut: float, EL: float) -> float:
     j = (j0 - 2451545.0)/36525.0 #where j is time between Julain centeries between j0 and j2000
     theta_g0 = 100.4606184 + 36000.77004*j + 0.000387933*j**2 - 2.583e-8*j**3   #Greenwich sideral time at 0h UT (degrees)
     theta_g0 = zeroTo360(theta_g0)                                              #ensure between 0 and 360 degrees
-    theta_g = theta_g0 + 360.98564736629*ut                                  #greenwich sidereal time at UT (degrees)
+    
+    UT = ut[0] + ut[1]/60 + ut[2]/3600
+    theta_g = theta_g0 + 360.98564736629*UT/24                                  #greenwich sidereal time at UT (degrees)
     lst = theta_g + EL                                                          #local sideral time (degrees)
 
     lst = zeroTo360(lst)                                                        #ensure between 0 and 360 degrees
 
-    time_epoch = j0 + ut/24.0
+    time_epoch = j0 + UT/24.0
     return lst, time_epoch
 
 def equatorial_to_eclipitcJ2000(dr: float, lst: float, h_e: float) -> float:
@@ -99,11 +101,25 @@ def create_da_los_vectors(ra: Union[array, NDArray], dec: Union[array, NDArray])
     num_obs = ra.shape[1]
     los_vectors = np.empty((3, num_obs), dtype=object)
 
-    for i in range(num_obs):
-        los_vectors[:,i] = array([
-            op.cos(dec[0,i]) * op.cos(ra[0,i]),
-            op.cos(dec[0,i]) * op.sin(ra[0,i]),
-            op.sin(dec[0,i])
-        ])
+    #DA section
+    if isinstance(ra, array):
+        for i in range(num_obs):
+            los_vectors[:,i] = array([
+                op.cos(dec[0,i]) * op.cos(ra[0,i]),
+                op.cos(dec[0,i]) * op.sin(ra[0,i]),
+                op.sin(dec[0,i])
+                ])
+
+    #ndarray Section
+    if isinstance(ra[0,0],float):
+        for i in range(num_obs):
+            los_vectors[:,i] = np.array([
+                op.cos(dec[0,i]) * op.cos(ra[0,i]),
+                op.cos(dec[0,i]) * op.sin(ra[0,i]),
+                op.sin(dec[0,i])
+                ])
+    
+    else:
+        print("Input Error")
 
     return los_vectors

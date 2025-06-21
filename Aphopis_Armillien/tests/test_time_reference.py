@@ -3,15 +3,42 @@ import numpy as np
 from Aphopis_Armillien.utils.time_reference import J0, zeroTo360, LST, equatorial_to_eclipitcJ2000, create_da_los_vectors
 
 def test_J0():
-    # Typical date
-    assert J0(2000, 1, 1) == pytest.approx(2451544.5)
-    # Edge cases
+    """
+    Tests the provided J0(y, m, d) routine.
+
+    Typical-case numbers come from Curtis (Example 5.4):
+        12 May 2004  →  J0 = 2 453 137.5
+
+    The tolerance is absolute, since the reference value is exact
+    for the algorithm’s integer-arithmetic formulation.
+    """
+
+    # ---------------------------
+    # 1. Typical (worked-example)
+    # ---------------------------
+    ref = 2_453_137.5          # Example 5.4 value (p. 215)
+    calc = J0(2004, 5, 12)
+    assert np.isclose(calc, ref, rtol=1e-6), (
+        f"Expected {ref}, got {calc}"
+    )
+
+    # ----------------
+    # 2. Return type
+    # ----------------
+    assert isinstance(calc, float), "J0 must return a float"
+
+    # ------------------------------
+    # 3. Boundary / error handling
+    # ------------------------------
     with pytest.raises(AssertionError):
-        J0(1800, 1, 1)  # Year out of range
+        J0(1899, 1, 1)          # year below lower bound
     with pytest.raises(AssertionError):
-        J0(2000, 13, 1)  # Month out of range
+        J0(2100, 1, 1)          # year above upper bound
     with pytest.raises(AssertionError):
-        J0(2000, 1, 32)  # Day out of range
+        J0(2025, 13, 1)         # invalid month
+    with pytest.raises(AssertionError):
+        J0(2025, 2, 32)         # invalid day
+
 
 def test_zeroTo360():
     assert zeroTo360(0) == 0
@@ -22,40 +49,165 @@ def test_zeroTo360():
     assert zeroTo360(-90) == 270
     assert zeroTo360(450) == 90
 
+
 def test_LST():
-    # LST should return a float in [0, 360] and a float epoch
-    # Test with textbook example
-    result = LST(2000, 1, 1, 0, 0)
-    if isinstance(result, tuple):
-        lst, epoch = result
-        assert 0 <= lst <= 360
-        assert isinstance(epoch, float)
-    else:
-        assert isinstance(result, float)
-        assert 0 <= result <= 360
+    """
+    Functional, boundary, and typical-case checks for LST().
+
+    Typical-case data (Curtis Example 5.6):
+        Date  : 3 Mar 2004
+        UT    : 04 h 30 m 00 s
+        EL    : 139° 47′ 00″  → 139.783333… deg
+        Expected LST = 8.57688 deg
+    """
+
+    # ---------------------------
+    # 1. Typical-case inputs
+    # ---------------------------
+    y, m, d = 2004, 3, 3
+    ut      = (4, 30, 0)                     # (h, m, s)
+    EL_deg  = 139 + 47/60 + 0/3600           # 139.783333…
+    lst_exp = 8.57688                        # deg  :contentReference[oaicite:2]{index=2}
+
+    # -------------------------------
+    # 2. Call the function under test
+    # -------------------------------
+    lst_calc, epoch_calc = LST(y, m, d, ut, EL_deg)
+
+    # -----------------------------------------------
+    # 3. Numerical accuracy vs. worked example
+    # -----------------------------------------------
+    assert np.isclose(lst_calc, lst_exp, rtol=1e-6), (
+        f"LST mismatch: expected {lst_exp}, got {lst_calc}"
+    )
+
+    # Verify the Julian epoch is J0 + UT/24
+    UT_hours      = ut[0] + ut[1]/60 + ut[2]/3600
+    j0            = J0(y, m, d)
+    epoch_expected = j0 + UT_hours/24
+    assert np.isclose(epoch_calc, epoch_expected, rtol=1e-10), (
+        "Returned epoch is incorrect"
+    )
+
+    # --------------------------------------
+    # 4. Types and value-range guarantees
+    # --------------------------------------
+    assert isinstance(lst_calc, float) and isinstance(epoch_calc, float)
+    assert 0.0 <= lst_calc < 360.0, "LST must lie in [0°, 360°)"
+
+    # -------------------------------------------------------
+    # 5. Simple boundary / defensive-programming check
+    # -------------------------------------------------------
+    with pytest.raises(AssertionError):
+        # Year below supported range should propagate J0()’s assertion
+        LST(1899, 1, 1, (0, 0, 0), 0.0)
 
 def test_equatorial_to_eclipitcJ2000():
-    # Test with typical values / Textbook example
+    """
+    Numerical, type/shape, and geometric checks for the
+    equatorial→ecliptic rotation routine.
 
-    dr = 1.0
-    lst = 0.0
-    h_e = 0.0
-    result = equatorial_to_eclipitcJ2000(dr, lst, h_e)
-    assert isinstance(result, np.ndarray)
-    assert result.shape == (3,)
-    # Check if the result is a valid rotation (not NaN or Inf)
-    assert np.all(np.isfinite(result))
+    Typical-case: Tokyo (lat = 35°40′ N) on 3 Mar 2004 04:30 UT
+                  LST = 8.59° (Curtis Ex. 5.6)
+    """
+
+    # --- 1. Build the worked-example inputs -----------------
+    # Site latitude (φ) in decimal degrees
+    lat_deg  = 35 + 40/60          # 35.6667°
+    lat_rad  = np.deg2rad(lat_deg)
+
+    # Spherical-earth radius (Curtis uses 6378 km in worked examples)
+    Re_km    = 6378.0
+
+    # Components relative to the earth’s rotation axis / equator
+    dr       = Re_km * np.cos(lat_rad)      # km
+    h_e      = Re_km * np.sin(lat_rad)      # km
+
+    # Local sidereal time from the example (degrees → radians)
+    lst_deg  = 8.59
+    lst_rad  = np.deg2rad(lst_deg)
+
+    # --- 2.  “Ground-truth” computation (independent) -------
+    # Equatorial vector of the site
+    r_eq = np.array([dr * np.cos(lst_rad),
+                     dr * np.sin(lst_rad),
+                     h_e])
+
+    # Obliquity rotation (about +x axis) with ε = 23.4°
+    eps      = np.deg2rad(23.4)
+    R_x = np.array([[1,            0,           0],
+                    [0,  np.cos(eps), np.sin(eps)],
+                    [0, -np.sin(eps), np.cos(eps)]])
+
+    r_expected = R_x @ r_eq        # ecliptic-frame vector (km)
+
+    # --- 3. Call the user function --------------------------
+    r_calc = equatorial_to_eclipitcJ2000(dr, lst_rad, h_e)
+
+    # --- 4. Accuracy: element-wise vector comparison --------
+    assert np.allclose(r_calc, r_expected, rtol=1e-6), (
+        f"Vector mismatch:\nexpected {r_expected}\nactual   {r_calc}"
+    )
+
+    # --- 5. Type, shape, and invariants ---------------------
+    assert isinstance(r_calc, np.ndarray), "Return type must be np.ndarray"
+    assert r_calc.shape == (3,),          "Return shape must be (3,)"
+    # Rotation should preserve magnitude, and x-component is invariant
+    assert np.isclose(np.linalg.norm(r_calc),
+                      np.linalg.norm(r_eq),
+                      rtol=1e-10), "Rotation must preserve vector length"
+    assert np.isclose(r_calc[0], r_eq[0], rtol=1e-6), (
+        "x-component should remain unchanged by x-axis rotation"
+    )
 
 def test_create_da_los_vectors():
-    # Test with typical values / Textbook example
-    # Right ascension and declination in Radians
+    """
+    Accuracy, shape/type, unit-length, and assertion checks for the
+    line-of-sight vector generator.
 
-    # Example values for RA and Dec
-    ra = np.array([[0, 6, 12, 18]])  # Right ascension in radians
-    dec = np.array([[0, np.pi/6, np.pi/3, np.pi/2]])  # Declination in radians
+    Typical-case numbers come from Curtis Example 5.11 (Table 5.1).
+    """
 
-    result = create_da_los_vectors(ra, dec)
-    assert isinstance(result, np.ndarray)
-    assert result.shape == (3, 4)  # 2D vectors for 4 observations
-    # Check if the result is a valid direction (not NaN or Inf)
-    assert np.all(np.isfinite(result))
+    # -------------------------------------------------
+    # 1. Typical-case inputs (degrees ➜ radians)
+    # -------------------------------------------------
+    ra_deg  = np.array([[43.537, 54.420, 64.318]])   # 1×N row
+    dec_deg = np.array([[-8.7833, -12.074, -15.105]])
+    ra_rad  = np.deg2rad(ra_deg)
+    dec_rad = np.deg2rad(dec_deg)
+
+    # -------------------------------------------------
+    # 2. Expected result from Eq. 5.57 (independent)
+    # -------------------------------------------------
+    expected = np.vstack((
+        np.cos(dec_rad) * np.cos(ra_rad),
+        np.cos(dec_rad) * np.sin(ra_rad),
+        np.sin(dec_rad)
+    ))
+
+    # -------------------------------------------------
+    # 3. Call the function under test
+    # -------------------------------------------------
+    los = create_da_los_vectors(ra_rad, dec_rad)
+
+    # -------------------------------------------------
+    # 4. Numerical accuracy (element-wise)
+    # -------------------------------------------------
+    assert np.allclose(los.astype(float), expected.astype(float), rtol=1e-6), (
+        f"LOS vectors incorrect:\nexpected\n{expected}\nactual\n{los}"
+    )
+
+    # -------------------------------------------------
+    # 5. Type, shape, and unit-length checks
+    # -------------------------------------------------
+    assert isinstance(los, np.ndarray),  "Return type must be np.ndarray"
+    assert los.shape == (3, 3),          "Return shape must be (3, N)"
+    norms = np.linalg.norm(los.astype(float), axis=0)
+    assert np.allclose(norms, 1.0, rtol=1e-10), "Each LOS vector must be unit length"
+
+    # -------------------------------------------------
+    # 6. Defensive-programming assertion check
+    # -------------------------------------------------
+    with pytest.raises(AssertionError):
+        # Mismatched RA/DEC lengths should trip the function’s asserts
+        create_da_los_vectors(np.array([[0, 1]]), np.array([[0]]))
