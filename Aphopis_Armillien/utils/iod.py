@@ -58,7 +58,7 @@ def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
 
     return f_series, g_series
 
-def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDArray[np.double], v2: NDArray[np.double], mu: float = 1.32712440018e11 , Re: float = 6378.137) -> bool:
+def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDArray[np.double], v2: NDArray[np.double], mu, Re: float = 6378.137) -> bool:
     """
     Check if the Guass IOD positions are physically feasible.
 
@@ -82,16 +82,24 @@ def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDA
 
 
     d_earth_sun = 1.496e+8  # Earth-Sun distance in kilometers, used for feasibility checks ( 1AU)
-    # Test 1: norm r > Re
-    if np.linalg.norm(r1) <= d_earth_sun or np.linalg.norm(r2) <= d_earth_sun or np.linalg.norm(r3) <= d_earth_sun:
-        r1[:] = np.nan
-        r2[:] = np.nan
-        r3[:] = np.nan
-        v2[:] = np.nan
-        raise ValueError("Position vectors r1 and r2 must be greater than distance of Earth as night time viewing).")
-
+    # Test 1a: norm r < Earth Sun distance
+    if mu == 1.32712440018e11:
+        if np.linalg.norm(r1) <= d_earth_sun or np.linalg.norm(r2) <= d_earth_sun or np.linalg.norm(r3) <= d_earth_sun:
+            r1[:] = np.nan
+            r2[:] = np.nan
+            r3[:] = np.nan
+            v2[:] = np.nan
+            raise ValueError("Position vectors r1 and r2 must be greater than distance of Earth as night time viewing).")
+    elif mu == 3.986e5:
+        if np.linalg.norm(r1) <= Re or np.linalg.norm(r2) <= Re or np.linalg.norm(r3) <= Re:
+            r1[:] = np.nan
+            r2[:] = np.nan
+            r3[:] = np.nan
+            v2[:] = np.nan
+            raise ValueError("Position vectors r1 and r2 must be greater than Radius of earth).")
+    
     # Test 3: Specific energy is negative - asteroid elliptic orbit
-    specific_energy = (np.linalg.norm(v2)**2 / 2) - mu/ (np.linalg.norm(r2) **2)
+    specific_energy = (np.linalg.norm(v2)**2 / 2) - mu / (np.linalg.norm(r2))
     if specific_energy >= 0:
         r1[:] = np.nan
         r2[:] = np.nan
@@ -108,7 +116,7 @@ def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDA
 
     return r1, r2, r3, v2 # Return the positions if all checks pass
 
-def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array], t: NDArray) -> NDArray[np.double]:
+def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array], t: NDArray, mu=1.32712440018e11) -> NDArray[np.double]:
     #Taken from Orbital Mechanics for Engineering Students (4th ed.) by Curtis. p.242 Algorithm 5.5. and Armillien Aphopis
     #The Seed takes real numbers not DA numbers.
     #Inputs:
@@ -118,8 +126,8 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
     #   obs_dir: 2D array of unit vectors pointing from observer to the point of interest, every column is an observation instance the rows are components x y z
     # 2-BP assumption:
     #   Assume the observations lie on the same plane
-    mu = 1.32712440018e11               #Suns gravitional parameter
-    dt_1 = t[1] - t[0]
+   
+    dt_1 = t[0] - t[1]
     dt_3 = t[2] - t[1]
     dt = dt_3 - dt_1
 
@@ -148,7 +156,7 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
     R_2_squared = np.dot(pos_obs[:,1], pos_obs[:,1])
 
     #obtain coefficient values for the 8th degree position polynomial
-    a = -1 * (A**2 + 2*A*E + (R_2_squared**2))
+    a =  -1*(A**2 + 2*A*E + (R_2_squared))
     b = -2*mu*B*(A+E)
     c = -1 * (mu**2 * B**2)
 
@@ -183,9 +191,9 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
         range_2_mag = np.zeros((len(real_roots)))               #topocentric ranges
         range_3_mag = np.zeros((len(real_roots)))               #topocentric ranges
 
-        r_1 = np.zeros((len(real_roots), 3))
-        r_2 = np.zeros((len(real_roots), 3))                   #helocentric positions
-        r_3 = np.zeros((len(real_roots), 3))
+        r_1 = np.zeros((3,len(real_roots)))
+        r_2 = np.zeros((3,len(real_roots)))                   #helocentric positions
+        r_3 = np.zeros((3,len(real_roots)))
 
         print(f"There are {len(real_roots)} positive real roots:\n")
 
@@ -200,7 +208,7 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
             range_1_mag[i] = 1 / D0 * ( (num / den) - D11)          #slant range magnitude for the first observation
 
             # Calculate the range_3 and r3
-            num = (6*(D13 * (dt_3/dt_1) + D23 * (dt/dt_1))*(r_2_mag[i]**3)) + (mu * D13 * (dt**2 - dt_3**2)* (dt_3/dt_1))
+            num = (6*(D13 * (dt_3/dt_1) - D23 * (dt/dt_1))*(r_2_mag[i]**3)) + (mu * D13 * (dt**2 - dt_3**2)* (dt_3/dt_1))
             den = (6 * r_2_mag[i]**3) + (mu * (dt**2 - dt_3**2))
             range_3_mag[i] = 1 / D0 * ((num / den) - D33)           #slant range magnitude for the third observation
 
@@ -218,10 +226,12 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
             f_3, g_3 = f_g_series(r_2[:,i], dt_3, 2, 3, mu=mu)  #get f and g series for the third observation
             f_1, g_1 = f_g_series(r_2[:,i], dt_1, 2, 3, mu=mu)  #get f and g series for the first observation
             
+            
+            
             v2 = 1/((f_1*g_3) - (f_3*g_1)) * (-f_3*r_1[:,i] + f_1*r_3[:,i]) 
 
             #Assess the 3 positions for feasibility -
-            r_1, r_2, r_3, v_2 = position_feasibility(r_1[:,i], r_2[:,i], r_3[:,i], v2)
+            r_1, r_2, r_3, v_2 = position_feasibility(r_1[:,i], r_2[:,i], r_3[:,i], v2, mu)
 
             if not np.any(np.isnan([r_1, r_2, r_3, v_2])):
                 print(f"Feasibility passed for root {i}:")
@@ -246,8 +256,8 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
 
     #If no real roots, set the position and range to zero
     #obtain the [r1,r2,r3] [range1,range2,range3]. Rows are the real root, columns are positions
-    position = [r_1, r_2, r_3]
-    ranges = [range_1, range_2, range_3]
+    position = np.array([r_1, r_2, r_3]).T
+    ranges = np.array([range_1, range_2, range_3]).T
 
     return position, ranges
 
