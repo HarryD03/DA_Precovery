@@ -262,7 +262,7 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
     return position, ranges
 
 
-
+#
 def lambert_battin_DA(r1: Union[array,NDArray], r2: Union[array, NDArray], dt: float, max_iter: int,  mu: float = 3.2712440018e11, order: int = None):
     """
     :parameter:
@@ -281,7 +281,7 @@ def lambert_battin_DA(r1: Union[array,NDArray], r2: Union[array, NDArray], dt: f
     # 1) promote to DA if neccessary & set a sensible algebra
     # -----------------------------------------
     if not isinstance(r1[0], DA) and not isinstance(r2[0], DA):
-        DA.init(0,1)        #nothing happens carry r1/r2 DA settings over - real numbers
+        print(f"Real")        #nothing happens carry r1/r2 DA settings over - real numbers
     else:
         if order is None:
             #inherit global settings
@@ -312,26 +312,28 @@ def lambert_battin_DA(r1: Union[array,NDArray], r2: Union[array, NDArray], dt: f
         A = g ** 1.5 * (alpha - op.sin(alpha) - beta + op.sin(beta))
         return op.log10(A) - op.log10(dt)  # f(x) = 0
 
-    def battin_dF(x):
-        g = s / (2 * (1.0 - x ** 2))
-        dg = (s * x) / (1.0 - x ** 2)
-        alpha = 2.0 * op.asin(op.sqrt(s / (2 * g)))
-        dalpha = (-s * dg) / (g ** 2 * op.sqrt(-s * (s - (2 * g)) / g**2))
-        beta = 2.0 * op.asin(op.sqrt((s - c) / (2 * g)))
-        dbeta = ((c - s) * g) / (g ** 2 * (op.sqrt((s - c) * (c + (2 * g) - s) / (g ** 2))))
+    def x_initial():
+        dt_p = np.sqrt(2/mu)*(s.cons()**(3/2) - c.cons()**(3/2))
+        T = dt/dt_p
+        x0 = (1-T) / (1+T)
+        return x0
+    k = r1[0].getMaxVariables()
+    
+    x = 1e-3 + DA(k)                    #guess at 0.1
 
-        A = g ** (3 / 2) * (alpha - op.sin(alpha) - beta + op.sin(beta))
-        dA = -1 / 2 * (op.sqrt(g)) * (3 * dg*(-alpha + op.sin(alpha) + beta - op.sin(beta))
-                                      + 2 * g * (dalpha * (dalpha * (op.cos(x) - 1) - dbeta * (op.cos(beta) - 1))))
-        return dA/A
+    for _ in range(1000):
+        A = battin_A_DA(x,r1,r2,mu)
+        f0 = op.log(A) - np.log(dt)
+        df0 = f0.deriv(k)
+        dx = - f0.cons()/df0.cons()
+        lamb = 1.0
+        while abs(x.cons() + lamb*dx) >=1.0:
+            lamb *= 0.5
+        x = x + lamb*dx
 
-    x = 0.0                    #guess at 0.0
-
-    for _ in range(max_iter):
-        f0 = battin_F(x)
-        df0 = battin_dF(x)
-        x -= f0/df0
-        if abs(f0) < 10e-12:
+        print(f"battin:\n{x.cons()}\n")
+        print(f"residual:\n{f0.cons()}\n")
+        if abs(f0.cons()) < 10e-12:
             break
 
     # -------------------------------
@@ -354,7 +356,7 @@ def lambert_battin_DA(r1: Union[array,NDArray], r2: Union[array, NDArray], dt: f
         beta = -beta
 
     a_min = s / 2
-    t_min = np.sqrt(a_min ** 3 / mu) * (np.pi - beta + np.sin(beta))
+    t_min = np.sqrt(a_min ** 3 / mu) * (np.pi - beta + op.sin(beta))
 
     if dt > t_min:
         alpha = 2 * np.pi - alpha
@@ -368,6 +370,7 @@ def lambert_battin_DA(r1: Union[array,NDArray], r2: Union[array, NDArray], dt: f
 def battin_A_DA(x_da, r1_da, r2_da, mu=1.32712440018e11):
     """
     Battin scalar function A (see Battin 10.4 or Armellian et al 2012) for battin_x_da function
+
 
     where
         g = s/ 2(1-x
@@ -391,13 +394,15 @@ def battin_A_DA(x_da, r1_da, r2_da, mu=1.32712440018e11):
     s = 0.5 * (r1mag + r2mag + c)
 
     # Battin auxillary g(x)
-    g = s / (2 * (1 - x_da**2))
+    g = s / (2 * (1 - x_da**2)) #Issue is g is negative as x_da**2 ^^^^
 
-    alpha = 2 * op.asin( op.sqrt( s / (2 * g)))
-    beta = 2 * op.asin( op.sqrt( (s - c) / (2*g)))
+    alpha = 2 * ((( s / (2 * g)).sqrt()).sin())
+    beta = 2 * ((( (s - c) / (2*g)).sqrt()).sin())
 
     #construct A
-    A = g**(3/2) * (alpha - op.sin(alpha) - beta + op.sin(beta))
+    A = g**(3/2) * (alpha - alpha.sin() - beta + beta.sin())
+    if A.cons() < 0:
+        print(f"A is negative")
     return A
 
 def battin_x_DA(r1_da: Union[array,NDArray], r2_da: Union[array,NDArray], dt: float, order: int, x0: float) -> DA:
@@ -412,30 +417,56 @@ def battin_x_DA(r1_da: Union[array,NDArray], r2_da: Union[array,NDArray], dt: fl
         Max order in expansion series of r1 etc
     :return:
     x_da:
-        DA expansion of Battin's parameter x(d)
+        DA expansion of Battin's parameter x(d) wrt to r1_da and r2_da
     """
-
-    #1) geometric scalars
-    c_vec = r2_da - r1_da
-    c =     op.vnorm(c_vec)
-    r1mag = op.vnorm(r1_da)
-    r2mag = op.vnorm(r2_da)
-    s = 0.5 * (r1mag + r2mag + c)
 
     # 2) get DA battin variable - expand around nominal solution
     x_da = x0 + DA(7)
     # 3) obtain f(x,DA) = ln A - ln dt
     A = battin_A_DA(x_da, r1_da, r2_da)
-    f = DA.log10(A) - np.log10(dt)
 
-    # 4) Newton iteration to obtain DA x. Do this or DA.invert(f,7)
-    k = 1
-    while k <= (DA.getMaxOrder()+1):
-        x_da = x_da - f / f.deriv(7)      # x = x - f/f'(x)
-        f = DA.log10(battin_A_DA(x_da, r1_da, r2_da)) - math.log10(dt) #update f
-        k *= 2
+    def f(x_da):
+        return battin_A_DA(x_da, r1_da, r2_da).log() - np.log(dt)
+    
+    # 4) Newton iteration to obtain DA x. This is the Implicit solver
+    p = array([r1_da, r2_da])
+    x_da = Implicit_solver_DA(x_da, p, f)
 
     return x_da
+
+def Nf(x, f, df):
+    k = x.getMaxVariables()
+
+    f = f.plug(k,0)
+    df = df.plug(k,0)
+
+    if np.allclose(df, 0):
+        raise ZeroDivisionError("Derivative is zero in Newton iteration")
+    x1 = x - f/df    
+    return x1
+
+def Implicit_solver_DA(x_da: DA, p_da: Union[DA,array], f: callable):
+        """
+            X needs to be the last DA variable
+                x_da: Dependant Variable (x_nom + DA(x)) - need to be initalised prior
+                p_da: Independant DA Variables (p_nom + DA(p_da))
+                f: Function for Newtons method
+            Return
+                x_da as a function of DA(p_da). x_da = x_nom + DA(p_da)
+        """
+        i = 1
+        k = x_da.getMaxVariables()
+
+        
+        def df(fx):
+            return fx.deriv(k)
+    
+        while i <= (DA.getMaxOrder()):
+          x_da = Nf(x_da, f(x_da, p_da), df(f(x_da, p_da)))
+          i *= 2
+
+        x_da = x_da.plug(k,0)
+        return x_da
 
 def battin_vel_DA(r1: Union[array,NDArray], r2: Union[array,NDArray], a: Union[DA,float], dE: Union[DA,float], dt: float, mu: float) -> DA:
     """
@@ -451,8 +482,8 @@ def battin_vel_DA(r1: Union[array,NDArray], r2: Union[array,NDArray], a: Union[D
     f = 1 - (a / op.vnorm(r1)) * (1 - op.cos(dE))
     g = dt - op.sqrt(a**3 / mu) * (dE - op.sin(dE))
     g_dot = 1 - (a / op.vnorm(r2)) * (1 - op.cos(dE))
-    v2 = (r2 - f * r1) / g
-    v1 = (g_dot * r2 - r1) / g
+    v1 = (r2 - f * r1) / g
+    v2 = (g_dot * r2 - r1) / g
     return v2, v1
 
 def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, mu: float = 3.2712440018e11,order: int = None):
@@ -464,17 +495,18 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
           order  : DA truncation order
         Returns (r, v) at t0+dt
     """
-    if not DA.initialized():
-        DA.init(order, N_GEN+1) # Initialize DA with order and number of variables
+    if not DA.initialized:
+        DA.init(order, r1.getMaxVariables()+1) # Initialize DA with order and number of variables
         if order is None:
             order = DA.getMaxOrder(r1[0]) + 1 if isinstance(r1[0], DA) else 0
     
     #Prepare variables
     sigma = r1.dot(v1) / op.sqrt(mu)
 
-    energy = r1.dot(r1) / 2 - mu / op.sqrt(op.vnorm(r1))  #Specific orbital energy
-    a = -mu / (2 * energy)  #Semi-major axis
-    if a <= 0.0:
+    energy = v1.dot(v1) / 2 - (mu / op.vnorm(r1))  #Specific orbital energy
+    
+    a = - mu / (2 * energy)  #Semi-major axis
+    if a.cons() <= 0.0:
         raise ValueError("ERROR: hyperbolic or parabolic semi major axis")
 
     dM = op.sqrt(mu / a**3) * dt    # change in mean anomaly
@@ -488,6 +520,7 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
     r1_nom = r1.cons() if isinstance(r1, DA) else r1
     dt_nom = dt if isinstance(dt, DA) else dt
 
+
     def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
         """
         Kepler's equation F(dE) = dE + (sigma/sqrt(a)) * (1 - cos(dE) - (1- r1/a)*sin(dE))
@@ -496,31 +529,57 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
         :param dM: Change in mean anomaly
         :return: Value of Kepler's equation at E
         """
-        dE = dM
-        for _ in range(max_iter):
+        DA.pushTO(1)
+        Max_Variable = dM.getMaxVariables()
+        dE = dM.cons() + DA(Max_Variable)
+        for _ in range(1000):
             F = dE + (sigma / op.sqrt(a)) * (1 - op.cos(dE)) - (1 - r1_norm / a) * op.sin(dE)
-            dF = 1.0 + (sigma / op.sqrt(a)) * (op.sin(dE) - (1 - r1_norm / a) * op.cos(dE))
-            if dF == 0:
+            dF = F.deriv(Max_Variable)
+            # dF = 1.0 + (sigma / op.sqrt(a)) * (op.sin(dE) - (1 - r1_norm / a) * op.cos(dE)) -> analytically derived dF/dM
+            if dF.cons() == 0:
                 raise ValueError("Derivative became zero during iteration")
-            dE += F / dF
-            if abs(F) < 10e-12:  # Convergence criterion
+            dE -= F.cons() / dF.cons()
+            print(f"{F.cons() / dF.cons()}")
+            print(f"dE:\n{dE}\n")
+            if abs(F.cons()) < 10e-12:  # Convergence criterion
                 break
-        return dE
+        
+        DA.popTO()
+        return dE.cons()
+    
 
-    dE_nom = kepler_F(a_nom, sigma_nom, r1_nom, dM_nom)
+    dE_nom = kepler_F(a, sigma, op.vnorm(r1), dM)
     # -------------------------------------
     # raise dE to DA variable and create taylor map
     # -------------------------------------
-    dE_da = dE_nom + DA(N_GEN + 1)  # Create DA variable for dE
-    F_da = dE_da + (sigma / op.sqrt(a)) * (1 - op.cos(dE_da)) - (1 - r1 / a) * op.sin(dE_da) - dM
+
+    dE_da = dE_nom + DA(dM.getMaxVariables())  # Create DA variable for dE
+    p_da = array([r1, v1])          # Shape (2,3)
     
-    dE_da = F_da.invert()  # Invert F_da to get dE_da as a function of DA variables.
-                           # F_da.invert() returns the taylor polynomial series of dE_da in terms of the other DA variables.
+    def F_da(dE_da, p_da):
+        #Unpack p array
+        #Generate Variables for Function
+
+        r1 = p_da[0,:]
+        v1 = p_da[1,:]
+
+        sigma = r1.dot(v1) / op.sqrt(mu)
+        energy = v1.dot(v1) / 2 - mu / op.sqrt(op.vnorm(r1))  #Specific orbital energy
+        a = -mu / (2 * energy)  #Semi-major axis
+        dM = dM = op.sqrt(mu / a**3) * dt    # change in mean anomaly
+
+        #Construct F.
+        return dE_da + (sigma / op.sqrt(a)) * (1 - op.cos(dE_da)) - (1 - op.vnorm(r1) / a) * op.sin(dE_da) - dM
+    
+    dE_da = Implicit_solver_DA(dE_da, p_da, F_da)
+
+    #Recompute variables with final dE_da Map 
+
 
     # -------------------------------------
     # Calcualte the final position and velocity vectors through lagrange coefficients
     # -------------------------------------
-    def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[array, NDArray], mu: float) -> Tuple[Union[array, NDArray], Union[array, NDArray]]:
+    def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[array, NDArray], v1: Union[array, NDArray], sigma_1, mu: float) -> Union[array, NDArray]:
         """
         Calculate the lagrange coefficients for position and velocity vectors.
         :param a: Semi-major axis
@@ -530,14 +589,15 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
         :return: Position and velocity vectors at t0 + dt
         """
         f = 1 - (a / op.vnorm(r1)) * (1 - op.cos(dE))
-        g = op.sqrt(a**3 / mu) * (dE - op.sin(dE))
-        g_dot = 1 - (a / op.vnorm(r2)) * (1 - op.cos(dE))
+        g = a*sigma_1/op.sqrt(mu) * (1 - op.cos(dE)) + (op.vnorm(r1) * op.sqrt(a/mu) * (op.sin(dE)))
+        r2 = f*r1 + g*v1
 
-        r = r1 * f + g * v1
-        v = (g_dot * r2 - r1) / g
+        ft = - (mu*a) / ((op.vnorm(r1)*op.vnorm(r2))) * op.sin(dE)
+        gt = 1 - (a/(op.vnorm(r2)) * (1 - op.cos(dE)))
+        v2 = ft*r1 + gt*v1
 
-        return r, v
+        return r2, v2
 
-    r2, v2 = lagrange_coefficients(a, dE_da, r1, mu)
+    r2, v2 = lagrange_coefficients(a, dE_da, r1, v1, sigma, mu)
 
     return r2, v2

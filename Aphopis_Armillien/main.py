@@ -657,11 +657,13 @@ def battin_x_DA(r1_da: Union[array,NDArray], r2_da: Union[array,NDArray], dt: fl
     f = DA.log10(A) - np.log10(dt)
 
     # 4) Newton iteration to obtain DA x. Do this or DA.invert(f,7)
+    
+    #Make this into a Function to copy algorithm 2.2
     k = 1
     while k <= (DA.getMaxOrder()+1):
-        x_da = x_da - f / f.deriv(7)      # x = x - f/f'(x)
-        f = DA.log10(battin_A_DA(x_da, r1_da, r2_da)) - math.log10(dt) #update f
-        k *= 2
+       x_da = x_da - f / f.deriv(7)      # x = x - f/f'(x)
+       f = DA.log10(battin_A_DA(x_da, r1_da, r2_da)) - math.log10(dt) #update f
+       k *= 2
 
     return x_da
 
