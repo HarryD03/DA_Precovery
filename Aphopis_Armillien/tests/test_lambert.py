@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
-from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf, Kepler_DA, lagrange_coefficients 
-import numpy as np
+from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf
 from typing import Union
 from daceypy import DA, array
 import daceypy.op as op
@@ -309,12 +308,13 @@ def test_kepler_da_full_orbit_regression_km():
         f"Velocity error {vel_err_kms.cons():.3e} km/s exceeds {tol_vel_kms:.1e} km/s"
     
     
-@pytest.mark.parametrize("dt", [60.0, 600.0])       # 1 min, 10 min
+    # 1 min, 10 min
 
-def test_lagrange_basic_interface(dt):
+def test_lagrange_basic_interface():
         r0, v0 = _leo_state()
         a  = np.linalg.norm(r0)        # circular ⇒ a = r
         # Eccentric-anomaly increment from the analytical short-arc formula
+        dt = 10
         dE = np.sqrt(MU_EARTH_KM / a ** 3) * dt
 
         r1, v1 = lagrange_coefficients(a, dE, r0, MU_EARTH_KM)

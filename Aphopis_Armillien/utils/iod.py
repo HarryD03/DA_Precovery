@@ -486,6 +486,30 @@ def battin_vel_DA(r1: Union[array,NDArray], r2: Union[array,NDArray], a: Union[D
     v2 = (g_dot * r2 - r1) / g
     return v2, v1
 
+def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[array, NDArray], v1: Union[array, NDArray], sigma_1, mu: float) -> Union[array, NDArray]:
+        """
+        Calculate the lagrange coefficients for position and velocity vectors.
+        :param a: Semi-major axis
+        :param dE: Eccentric anomaly
+        :param r1: Initial position vector
+        :param mu: Standard gravitational parameter
+        :return: Position and velocity vectors at t0 + dt
+        Source: 16.346 Astrodynamics Fall 2008 MIT OpenCourseWare
+        """
+        f = 1 - (a / op.vnorm(r1)) * (1 - op.cos(dE))
+        g = a*sigma_1/op.sqrt(mu) * (1 - op.cos(dE)) + (op.vnorm(r1) * op.sqrt(a/mu) * (op.sin(dE)))
+        r2 = f*r1 + g*v1
+
+        ft = - op.sqrt((mu*a)) / ((op.vnorm(r1)*op.vnorm(r2))) * op.sin(dE)
+        gt = 1 - (a/(op.vnorm(r2)) * (1 - op.cos(dE)))
+        v2 = ft*r1 + gt*v1
+
+        #conservation of angular momentum
+
+        assert np.isclose(f*gt - ft*g, 1, atol=1e-9), f"Lagrange Coefficients incorrect"
+
+        return r2, v2
+
 def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, mu: float = 3.2712440018e11,order: int = None):
     """
         High-order Kepler solver
@@ -520,7 +544,7 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
     r1_nom = r1.cons() if isinstance(r1, DA) else r1
     dt_nom = dt if isinstance(dt, DA) else dt
 
-
+    # Issue is here
     def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
         """
         Kepler's equation F(dE) = dE + (sigma/sqrt(a)) * (1 - cos(dE) - (1- r1/a)*sin(dE))
@@ -529,11 +553,11 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
         :param dM: Change in mean anomaly
         :return: Value of Kepler's equation at E
         """
-        DA.pushTO(1)
+
         Max_Variable = dM.getMaxVariables()
         dE = dM.cons() + DA(Max_Variable)
         for _ in range(1000):
-            F = dE + (sigma / op.sqrt(a)) * (1 - op.cos(dE)) - (1 - r1_norm / a) * op.sin(dE)
+            F = (dE + (sigma / op.sqrt(a)) * (1 - op.cos(dE)) - (1 - r1_norm / a) * op.sin(dE)) - dM
             dF = F.deriv(Max_Variable)
             # dF = 1.0 + (sigma / op.sqrt(a)) * (op.sin(dE) - (1 - r1_norm / a) * op.cos(dE)) -> analytically derived dF/dM
             if dF.cons() == 0:
@@ -544,7 +568,7 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
             if abs(F.cons()) < 10e-12:  # Convergence criterion
                 break
         
-        DA.popTO()
+        
         return dE.cons()
     
 
@@ -565,12 +589,13 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
 
         sigma = r1.dot(v1) / op.sqrt(mu)
         energy = v1.dot(v1) / 2 - mu / op.sqrt(op.vnorm(r1))  #Specific orbital energy
-        a = -mu / (2 * energy)  #Semi-major axis
-        dM = dM = op.sqrt(mu / a**3) * dt    # change in mean anomaly
+        a = - mu / (2 * energy)  #Semi-major axis
+        dM = op.sqrt(mu / a**3) * dt    # change in mean anomaly
 
         #Construct F.
         return dE_da + (sigma / op.sqrt(a)) * (1 - op.cos(dE_da)) - (1 - op.vnorm(r1) / a) * op.sin(dE_da) - dM
     
+    #problem is here :(
     dE_da = Implicit_solver_DA(dE_da, p_da, F_da)
 
     #Recompute variables with final dE_da Map 
@@ -579,24 +604,6 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
     # -------------------------------------
     # Calcualte the final position and velocity vectors through lagrange coefficients
     # -------------------------------------
-    def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[array, NDArray], v1: Union[array, NDArray], sigma_1, mu: float) -> Union[array, NDArray]:
-        """
-        Calculate the lagrange coefficients for position and velocity vectors.
-        :param a: Semi-major axis
-        :param dE: Eccentric anomaly
-        :param r1: Initial position vector
-        :param mu: Standard gravitational parameter
-        :return: Position and velocity vectors at t0 + dt
-        """
-        f = 1 - (a / op.vnorm(r1)) * (1 - op.cos(dE))
-        g = a*sigma_1/op.sqrt(mu) * (1 - op.cos(dE)) + (op.vnorm(r1) * op.sqrt(a/mu) * (op.sin(dE)))
-        r2 = f*r1 + g*v1
-
-        ft = - (mu*a) / ((op.vnorm(r1)*op.vnorm(r2))) * op.sin(dE)
-        gt = 1 - (a/(op.vnorm(r2)) * (1 - op.cos(dE)))
-        v2 = ft*r1 + gt*v1
-
-        return r2, v2
 
     r2, v2 = lagrange_coefficients(a, dE_da, r1, v1, sigma, mu)
 
