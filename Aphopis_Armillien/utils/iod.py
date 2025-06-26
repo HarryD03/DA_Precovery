@@ -510,6 +510,33 @@ def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[a
 
         return r2, v2
 
+def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
+    """
+    Kepler's equation F(dE) = dE + (sigma/sqrt(a)) * (1 - cos(dE) - (1- r1/a)*sin(dE))
+    :param a: Semi-major axis
+    :param sigma: Specific angular momentum
+    :param dM: Change in mean anomaly
+    :return: Value of Kepler's equation at E
+    """
+
+    Max_Variable = dM.getMaxVariables()
+    dE = dM.cons() + DA(Max_Variable)
+
+    for _ in range(1000):
+        F = (dE + (sigma / op.sqrt(a)) * (1 - op.cos(dE)) - (1 - r1_norm / a) * op.sin(dE)) - dM
+        if abs(F.cons()) < 10e-12:  # Convergence criterion
+            break
+        dF = F.deriv(Max_Variable)
+        # dF = 1.0 + (sigma / op.sqrt(a)) * (op.sin(dE) - (1 - r1_norm / a) * op.cos(dE)) -> analytically derived dF/dM
+        if dF.cons() == 0:
+            raise ValueError("Derivative became zero during iteration")
+        dE -= F.cons() / dF.cons()
+        print(f"{F.cons() / dF.cons()}")
+        print(f"dE:\n{dE}\n")
+        
+        
+    return dE.cons()
+
 def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, mu: float = 3.2712440018e11,order: int = None):
     """
         High-order Kepler solver
@@ -533,8 +560,10 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
     if a.cons() <= 0.0:
         raise ValueError("ERROR: hyperbolic or parabolic semi major axis")
 
-    dM = op.sqrt(mu / a**3) * dt    # change in mean anomaly
-    
+    n = op.sqrt(mu/a**3)
+    #Obtain time of passage through perigee 
+    print(dt)
+    dM = n*dt
     # -------------------------------------
     #Calculate the Nominal change in Eccentric anomaly - via Newton iteration
     # -------------------------------------
@@ -544,33 +573,6 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
     r1_nom = r1.cons() if isinstance(r1, DA) else r1
     dt_nom = dt if isinstance(dt, DA) else dt
 
-    # Issue is here
-    def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
-        """
-        Kepler's equation F(dE) = dE + (sigma/sqrt(a)) * (1 - cos(dE) - (1- r1/a)*sin(dE))
-        :param a: Semi-major axis
-        :param sigma: Specific angular momentum
-        :param dM: Change in mean anomaly
-        :return: Value of Kepler's equation at E
-        """
-
-        Max_Variable = dM.getMaxVariables()
-        dE = dM.cons() + DA(Max_Variable)
-        for _ in range(1000):
-            F = (dE + (sigma / op.sqrt(a)) * (1 - op.cos(dE)) - (1 - r1_norm / a) * op.sin(dE)) - dM
-            dF = F.deriv(Max_Variable)
-            # dF = 1.0 + (sigma / op.sqrt(a)) * (op.sin(dE) - (1 - r1_norm / a) * op.cos(dE)) -> analytically derived dF/dM
-            if dF.cons() == 0:
-                raise ValueError("Derivative became zero during iteration")
-            dE -= F.cons() / dF.cons()
-            print(f"{F.cons() / dF.cons()}")
-            print(f"dE:\n{dE}\n")
-            if abs(F.cons()) < 10e-12:  # Convergence criterion
-                break
-        
-        
-        return dE.cons()
-    
 
     dE_nom = kepler_F(a, sigma, op.vnorm(r1), dM)
     # -------------------------------------
@@ -588,7 +590,7 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
         v1 = p_da[1,:]
 
         sigma = r1.dot(v1) / op.sqrt(mu)
-        energy = v1.dot(v1) / 2 - mu / op.sqrt(op.vnorm(r1))  #Specific orbital energy
+        energy = v1.dot(v1) / 2 - mu / op.vnorm(r1)  #Specific orbital energy
         a = - mu / (2 * energy)  #Semi-major axis
         dM = op.sqrt(mu / a**3) * dt    # change in mean anomaly
 
