@@ -317,25 +317,25 @@ def lambert_battin_DA(r1: Union[array,NDArray], r2: Union[array, NDArray], dt: f
         T = dt/dt_p
         x0 = (1-T) / (1+T)
         return x0
+    
     k = r1[0].getMaxVariables()
     
     x = 1e-3 + DA(k)                    #guess at 0.1
 
-    for _ in range(1000):
-        A = battin_A_DA(x,r1,r2,mu)
-        f0 = op.log(A) - np.log(dt)
-        df0 = f0.deriv(k)
-        dx = - f0.cons()/df0.cons()
-        lamb = 1.0
-        while abs(x.cons() + lamb*dx) >=1.0:
-            lamb *= 0.5
-        x = x + lamb*dx
+    def fbattin(x, p):
+        #unpack p
+        r1 = p[0,:]
+        r2 = p[1,:]
+        
 
-        print(f"battin:\n{x.cons()}\n")
-        print(f"residual:\n{f0.cons()}\n")
-        if abs(f0.cons()) < 10e-12:
-            break
-
+        A = battin_A_DA(x, r1, r2)      #x is too large again - need to review battin lambert paper for first guess of x
+        return op.log10(A) - np.log10(dt)
+    
+    x0 = 0.0
+    p = array([r1, r2])
+    
+    x_nom = newton_nomial_DA(x0, p, fbattin, tol=1e-9, MaxIter=1000)
+    
     # -------------------------------
     # 4) Get x_map through newton of battin scalar equation
     # ---------------------------------
@@ -367,7 +367,7 @@ def lambert_battin_DA(r1: Union[array,NDArray], r2: Union[array, NDArray], dt: f
 
     return v2, v1
 
-def battin_A_DA(x_da, r1_da, r2_da, mu=1.32712440018e11):
+def battin_A_DA(x_da, r1_da, r2_da):
     """
     Battin scalar function A (see Battin 10.4 or Armellian et al 2012) for battin_x_da function
 
@@ -395,9 +395,19 @@ def battin_A_DA(x_da, r1_da, r2_da, mu=1.32712440018e11):
 
     # Battin auxillary g(x)
     g = s / (2 * (1 - x_da**2)) #Issue is g is negative as x_da**2 ^^^^
-
-    alpha = 2 * ((( s / (2 * g)).sqrt()).sin())
-    beta = 2 * ((( (s - c) / (2*g)).sqrt()).sin())
+    al_frac = (s/(2*g)).sqrt()
+    be_frac = ((s-c)/(2*g)).sqrt()
+    print(al_frac.cons())
+    print(be_frac.cons())
+    EPS = 1e-12
+    
+    if al_frac.cons() >= 1.0:
+        al_frac = al_frac - EPS
+    if be_frac.cons() >= 1.0:
+        be_frac = be_frac - EPS
+    
+    alpha = 2 * (al_frac.arcsin())
+    beta = 2 * (be_frac.arcsin())
 
     #construct A
     A = g**(3/2) * (alpha - alpha.sin() - beta + beta.sin())
@@ -509,6 +519,42 @@ def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[a
         assert np.isclose(f*gt - ft*g, 1, atol=1e-9), f"Lagrange Coefficients incorrect"
 
         return r2, v2
+
+def newton_nomial_DA(x0, p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float) -> float:
+    """
+    Newtons Method applied to DA to obtain Nomial Solution for dependant variable
+    DA must have been initialised Prior
+
+    :param x0: Initial guess 
+    :param p: Everything other variable in f
+    :parma f: Callable function f(x; p) = 0 which will be evaluated at every newton iteration
+    :return: Nomial solution for x 
+    """
+
+    Max_variable = p[0][0].getMaxVariables()
+    
+    x = x0 + DA(Max_variable)  
+    flag = True
+    iter = 1
+
+    while flag:
+        F = f(x,p)
+
+        dF = F.deriv(Max_variable)
+        if dF.cons() == 0:
+            print(f"Iteration Number: {iter}\n")
+            raise ValueError("Derivative became zero during iteration") 
+        x -= F.cons()/dF.cons()
+        iter += 1
+
+        print(iter)
+        if abs(F.cons()) < tol:
+            flag = False
+        if iter > MaxIter:
+            flag = False
+            raise(f"Maximum Number of Iterations reached")
+
+    return x.cons()
 
 def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
     """

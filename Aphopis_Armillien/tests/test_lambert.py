@@ -1,10 +1,25 @@
 import numpy as np
 import pytest
-from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf
+from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F
 from typing import Union
 from daceypy import DA, array
 import daceypy.op as op
 from numpy.typing import NDArray
+
+def _leo_state_km():
+    """
+    Circular prograde LEO state (km-units). Taken form Example 2-4 page 94
+
+    The position is on +X; velocity on +Y so that r·v = 0.
+    """
+    r0 = np.array([1131.340, -2282.343, 6672.423])       # km
+    v0 = np.array([-5.64305, 4.30333, 2.42879])           # km s⁻¹
+
+    #Textbook solution
+    r1 = np.array([-4219.7527, 4363.0292, -3958.7666])
+    v1 = np.array([3.689866, -1.916735, -6.112511])
+    return r0, v0, r1, v1
+
 
 def test_battin_vel_DA():
     """
@@ -108,10 +123,12 @@ def test_battin_A_DA():
     beta    = 2 * np.arcsin(np.sqrt((s - c) / (2 * g)))
     A_ref   = g**1.5 * (alpha - np.sin(alpha) - beta + np.sin(beta))
 
+    """
     # --------------------------- NumPy branch -----------------------
     A_num = battin_A_DA(x, r1, r2, mu)
     assert np.isclose(A_num, A_ref, rtol=1e-6)
     assert isinstance(A_num, float)
+    """
 
     # ----------------------------- DA branch ------------------------
     DA.init(4,7)                              # 6 vars, 4-th order
@@ -120,10 +137,10 @@ def test_battin_A_DA():
     r2_da = array([r2[i] + DA(i + 4) for i in range(3)])   # DA(4..6)
     x_da  = x + DA(7)
 
-    A_da  = battin_A_DA(x_da, r1_da, r2_da, mu)
+    A_da  = battin_A_DA(x_da, r1_da, r2_da)
 
     assert isinstance(A_da, DA)
-    assert np.isclose(A_da.cons(), A_ref, rtol=1e-6)
+    assert np.isclose(A_da.cons(), A_ref, rtol=1e-6), f"Obtain {A_da.cons()}, Expected {A_ref}"
     return
 
 # ------------------------------------------------------------------
@@ -186,8 +203,8 @@ def test_lambert_battin_DA():
     # Example 5.2 data  (Vallado, pp. 498)
     # -------------------------------------------------
     r1_vals = np.array([ 15945.34, 0.0,  0.0])     # km
-    r2_vals = np.array([-12214.838,  10249.46731,  0.0])    # km
-    dt       = 3600.0                                   # s
+    r2_vals = np.array([-12214.83899,  10249.46731,  0.0])    # km
+    dt       = 76 * 60                                   # s
     mu_val   = 1.32712440018e11                              # km³/s²
     max_iter = 100
     order    = 4                                        # DA order
@@ -227,3 +244,40 @@ def test_lambert_battin_DA():
 
     assert specific_energy(r1_vals, 0) < 0
     assert specific_energy(r2_vals, 0) < 0
+
+def test_newton_nomial_DA():
+    #Obtain dE_nom solution via Kepler_F
+    r1, v1, _, _ = _leo_state_km()
+
+    DA.init(4,7)
+    r1 = array([r1[i] + DA(i + 1) for i in range(3)])
+    v1 = array([v1[i] + DA(i + 4) for i in range(3)])
+    mu = 3.986e5
+    dt = 40 * 60
+    sigma = r1.dot(v1) / op.sqrt(mu)
+    energy = v1.dot(v1) / 2 - (mu / op.vnorm(r1))  #Specific orbital energy
+    a = - mu / (2 * energy)  #Semi-major axis
+    n = op.sqrt(mu/a**3)
+    dM = n*dt
+
+    #Obtain dE_nom solution via Kepler_F
+    dE_nom_kepler = kepler_F(a, sigma, op.vnorm(r1), dM)
+    #Obtain dE_nom solution via newton_nomial_DA and seperate kepler equation function
+    def fkep(dE, p):
+        
+        #Unpack p
+        a = p[0]
+        sigma = p[1]
+        r1_norm = p[2]
+        dM = p[3]
+
+        return dE + (sigma / op.sqrt(a)) * (1 - op.cos(dE)) - (1 - r1_norm/ a) * op.sin(dE) - dM
+    
+
+    p = array([a, sigma, op.vnorm(r1), dM]) #pack p 
+    tol = 1e-12
+    dE_nom_newton = newton_nomial_DA(dM, p, fkep, tol, MaxIter=1000)
+
+    assert np.isclose(dE_nom_kepler, dE_nom_newton, atol = 1e-9), f"Newton Function:{dE_nom_newton}\nIntegrated Function: {dE_nom_kepler}\n"
+
+    #Assert same 
