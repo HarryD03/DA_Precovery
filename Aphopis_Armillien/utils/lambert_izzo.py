@@ -16,7 +16,7 @@ from numpy.typing import NDArray
         findxy()                     - Incomplete
         x2tof()                      - Incomplete
         x2tof2()                     - Incomplete
-        hypergeometricF()            - Incomplete
+        hypergeometricF()            - Complete
         householder_iter_DA_nom      - Incomplete
         householder_iter_DA_Map      - Incomplete
 """
@@ -115,7 +115,7 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
     
     return v1, v2
 
-def findxy(L: Union[DA, float], T: float[DA,float], multi_revs) -> Union[array,NDArray]:
+def findxy(L: Union[DA, float], T: Union[DA,float], multi_revs) -> Union[array,NDArray]:
     """
     Algorithm 2 Defined by Dario Izzo solution to Lamberts problem. "Revisiting Lamberts problem".
     DA compatible
@@ -145,6 +145,7 @@ def findxy(L: Union[DA, float], T: float[DA,float], multi_revs) -> Union[array,N
     #Detect if the multi-revoultion time
     if T.cons() < (T0.cons()) and M_max > 0:
         #Halley iterations from x = 0, T = T0 and find T_min
+
         iter = 1
         T_min = T0
         flag = True 
@@ -178,16 +179,19 @@ def findxy(L: Union[DA, float], T: float[DA,float], multi_revs) -> Union[array,N
 
     ## Find all solutions in x,y
     x_list = np.empty(int(2*M_max + 1), dtype=object)
+    
     #x seed generation based on zeta-T plane relationships transfered to x-T plane
-    if T >= T0:
+    if T.cons() >= T0.cons():
         x0 = (T0/T)**(2/3) - 1
-    elif T < T1:
+    elif T.cons() < T1.cons():
         x0 = (5/2) * (T1*(T1-T))/(T*(1-L**5)) + 1
-    elif T1 < T and T < T0:
+    elif T1.cons() < T.cons() and T.cons() < T0.cons():
         x0 = (T0/T)**(op.log2(T1/T0)) - 1
     else:
         raise ValueError("Parameterised Time of Flight Parameter does not fall into any of the possible solutiions")
     
+    x0 = x0.cons()      #x0 must be defined as an independant DA variable within the iteraiton loop 
+
     #HouseHolder iterator function
     def f(x):
         """
@@ -230,7 +234,7 @@ def x2tof(x: DA, M: float, L: Union[float, DA]):
 
     battin = 0.01
     lagrange = 0.2
-    dist = abs(x.cons() - 1)
+    dist = np.abs(x.cons() - 1)
 
     if dist < lagrange and dist > battin: #Use Lagrange Tof Expression for Low energy transfers (x ->)
         T = x2tof2(x, M, L)
@@ -238,7 +242,7 @@ def x2tof(x: DA, M: float, L: Union[float, DA]):
     
     K = L**2
     E = x**2 - 1
-    rho = abs(E)
+    rho = abs(E.cons())             #abs for DA objects seems to fail. Work around is E.cons(). DA(x) will be neglected in root finding iteration
     y = op.sqrt(1 + K * E)
 
     if dist < battin:                      #If x -> 1 use Battin
@@ -258,10 +262,9 @@ def x2tof(x: DA, M: float, L: Union[float, DA]):
             f = op.sqrt(rho) * (y - L * x)
             d = op.log(f + g)
         
-        T = (x - L * y - d/y) /E
+        T = (x - L * y - d/op.sqrt(rho)) /E
         return T
-    
-    return T
+    return
 
 def x2tof2(x: DA, M, L):
     """
@@ -276,15 +279,15 @@ def x2tof2(x: DA, M, L):
     if a.cons() > 0:
         alpha = 2.0 * op.acos(x)
         beta = 2.0 * (op.asin(op.sqrt(L**2/a)))
-        if L < 0.0:         #Chord > semi-perimeter. 
+        if L.cons() < 0.0:         #Chord > semi-perimeter. 
             beta = -beta
-        T = a**(3/2)*((alpha - op.sin(alpha)) - (beta - op.sin(beta)) + 2*M*np.pi)
+        T = a**(3/2)*((alpha - op.sin(alpha)) - (beta - op.sin(beta)) + 2*M*np.pi) / 2
     else:   #For the Hyperbolic / parabolic case
         alpha = 2.0 * op.cosh(x)
         beta = 2.0 * op.sinh(op.sqrt(-L * L / a))
         if L < 0.0:
             beta = -beta
-        T = (-2*a**(3/2) * ((op.sinh(alpha) - alpha) - (op.sinh(beta) - beta)))
+        T = (-a* op.sqrt(-a) * ((op.sinh(alpha) - alpha) - (op.sinh(beta) - beta))/2)
 
     return T
 
@@ -298,7 +301,8 @@ def hypergeometricF(S1, tol=1e-11):
     :params tol: Desired Convergence tolerance
     """
     #Initialise variables
-    Cj = 0.0
+    Cj = 1.0
+    Sj = 1.0
     err = 1.0
     j = 0           #iterations = j + 1
     while err > tol:
@@ -332,6 +336,7 @@ def householder_iter_DA_nom(x0, f: callable, MaxVar, tol=1e-12, MaxIter=1000):
         F = f(x)
         dFdx = F.deriv(MaxVar)
         assert dFdx.cons() != 0, "Derivative cannot be zero"
+        
         dFFdxx = dFdx.deriv(MaxVar)
         dFFFdxxx = dFFdxx.deriv(MaxVar)
 
