@@ -445,7 +445,7 @@ def battin_x_DA(r1_da: Union[array,NDArray], r2_da: Union[array,NDArray], dt: fl
     return x_da
 
 def Nf(x, f, df):
-    k = x.getMaxVariables()
+    k = DA.getMaxVariables()
 
     f = f.plug(k,0)
     df = df.plug(k,0)
@@ -455,7 +455,7 @@ def Nf(x, f, df):
     x1 = x - f/df    
     return x1
 
-def Implicit_solver_DA(x_da: DA, p_da: Union[DA,array], f: callable):
+def Implicit_solver_DA(x_da: Union[float,DA], p_da: Union[DA,array], f: callable):
         """
             X needs to be the last DA variable
                 x_da: Dependant Variable (x_nom + DA(x)) - need to be initalised prior
@@ -465,14 +465,14 @@ def Implicit_solver_DA(x_da: DA, p_da: Union[DA,array], f: callable):
                 x_da as a function of DA(p_da). x_da = x_nom + DA(p_da)
         """
         i = 1
-        k = x_da.getMaxVariables()
-
+        k = DA.getMaxVariables()
+        x_da = x_da + DA(k)
         
         def df(fx):
             return fx.deriv(k)
     
         while i <= (DA.getMaxOrder()):
-          x_da = Nf(x_da, f(x_da, p_da), df(f(x_da, p_da)))
+          x_da = Nf(x_da, f(x_da), df(f(x_da)))
           i *= 2
 
         x_da = x_da.plug(k,0)
@@ -531,14 +531,14 @@ def newton_nomial_DA(x0, p: Union[DA, array, float, NDArray], f: callable, tol: 
     :return: Nomial solution for x 
     """
 
-    Max_variable = p[0][0].getMaxVariables()
+    Max_variable = DA.getMaxVariables()
     
     x = x0 + DA(Max_variable)  
     flag = True
     iter = 1
 
     while flag:
-        F = f(x,p)
+        F = f(x)
 
         dF = F.deriv(Max_variable)
         if dF.cons() == 0:
