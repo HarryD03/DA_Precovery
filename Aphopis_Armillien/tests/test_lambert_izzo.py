@@ -36,7 +36,9 @@ def _compute_LT(r1, r2, dt, mu):
 
 @pytest.mark.parametrize("lambert", [izzo.lambert])
 def test_lambert_izzo(lambert):
-    """Compare against reference Vallado velocities for single revolution."""
+    """Compare against reference Vallado velocities for single revolution.
+        NOTE: We do -(Variable) in DA. This means the taylor coefficents in DA change and effectly mirror the nomimal solution and the distrubution
+        """
     NVar = len(R1) + len(R2)
     DA.init(4, NVar + 1)
     
