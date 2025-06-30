@@ -76,13 +76,12 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
         h_dir = h_dir / op.vnorm(h_dir)
         assert h_dir[2].cons() != 0, f"The Angular Momentum Vector has no z component, impossible to define clock or counterclockwise direction"
         
-        if ((r1[0]*r2[1]).cons() - (r1[1]*r2[0])).cons() < 0:         #Transfer angle is larger than 180  degrees as seen from above the z axis
+        if h_dir[2].cons() < 0:         #Transfer angle is larger than 180  degrees as seen from above the z axis
             L = -L
-            r1_tangent_dir = r1_radial_dir.cross(h_dir)
-            r2_tangent_dir = r2_radial_dir.cross(h_dir)
-        else:
-            r1_tangent_dir = h_dir.cross(r1_radial_dir)
-            r2_tangent_dir = h_dir.cross(h_dir)
+            h_dir = - h_dir
+            
+    r1_tangent_dir = h_dir.cross(r1_radial_dir)
+    r2_tangent_dir = h_dir.cross(r2_radial_dir)
     
     if cw: #Retrograde motion
         r1_tangent_dir = -r1_tangent_dir
