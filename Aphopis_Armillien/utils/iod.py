@@ -445,7 +445,7 @@ def battin_x_DA(r1_da: Union[array,NDArray], r2_da: Union[array,NDArray], dt: fl
     return x_da
 
 def Nf(x, f, df):
-    k = DA.getMaxVariables()
+    k = DA.getMaxVariables()        
 
     f = f.plug(k,0)
     df = df.plug(k,0)
@@ -455,7 +455,7 @@ def Nf(x, f, df):
     x1 = x - f/df    
     return x1
 
-def Implicit_solver_DA(x_da: Union[float,DA], p_da: Union[DA,array], f: callable):
+def Implicit_solver_DA(x_da: Union[float,DA], f: callable):
         """
             X needs to be the last DA variable
                 x_da: Dependant Variable (x_nom + DA(x)) - need to be initalised prior
@@ -628,7 +628,7 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
     dE_da = dE_nom + DA(dM.getMaxVariables())  # Create DA variable for dE
     p_da = array([r1, v1])          # Shape (2,3)
     
-    def F_da(dE_da, p_da):
+    def F_da(dE_da):
         #Unpack p array
         #Generate Variables for Function
 
@@ -644,7 +644,7 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
         return dE_da + (sigma / op.sqrt(a)) * (1 - op.cos(dE_da)) - (1 - op.vnorm(r1) / a) * op.sin(dE_da) - dM
     
     #problem is here :(
-    dE_da = Implicit_solver_DA(dE_da, p_da, F_da)
+    dE_da = Implicit_solver_DA(dE_da, F_da)
 
     #Recompute variables with final dE_da Map 
 

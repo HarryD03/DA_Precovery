@@ -125,20 +125,6 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
     return velocities   #velcoity[0] is (v1,v2) of first direction, velcoity[1] is (v1,v2) of second solution
 
 
-"""
-    for i in range(0, len(x_list)):
-        vr1 = gamma * ((L * y_list[i] - x_list[i]) - rho * (L * y_list[i] + x_list[i])) / r1_norm
-        vr2 = -gamma * ((L * y_list[i] - x_list[i]) + rho * (L * y_list[i] + x_list[i])) / r2_norm
-        vt = gamma * sigma * (y_list[i] + L * x_list[i])
-        vt1 = vt / r1_norm
-        vt2 = vt / r2_norm
-        for j in range(0, 2):
-            v1[i][j] = vr1 * r1_radial_dir[j] + vt1 * r1_tangent_dir[j]
-            v2[i][j] = vr2 * r2_radial_dir[j] + vt2 * r2_tangent_dir[j]
-    
-    return v1, v2
-"""
-
 def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
     """
     Algorithm 2 Defined by Dario Izzo solution to Lamberts problem. "Revisiting Lamberts problem".
