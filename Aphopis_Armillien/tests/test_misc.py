@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F
+from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F, Implicit_solver_DAVec
 from typing import Union
 from daceypy import DA, array
 import daceypy.op as op
@@ -152,21 +152,22 @@ def test_Implicit_solver_DA():
     Test DA scalar - In theory if p is a column vector, it will still work - define func differently.
     """
 
-    DA.init(4,2)
+    DA.init(6,2)
+    p0 = 1.0
+    x0 = 1.0
+    def func(x_da):
+        return x_da**2 - p
 
-    def func(x_da, p):
-        return x_da*x_da - p
-
-    p = 1.0 + DA(1)
-    x_init = DA(1.0) + DA(2)      # deliberately off the root
+    p = p0 + DA(1)
+    x_init = DA(x0)      # deliberately off the root
     root_da = Implicit_solver_DA(x_init, p, func)
     print(f"Solution is:\n{root_da}")
 
-    def ex4_2_1(p0: float):
+    def ex4_2_1(p0: float, x0: float):
         def Nf(x, p):
             return x - (x * x - p) / (2 * x)
         tol = 1e-14
-        x0 = 1.0   # x0 is just some initial guess
+        x0 = x0   # x0 is just some initial guess
         i = 0
 
         # double precision computation => fast
@@ -181,7 +182,7 @@ def test_Implicit_solver_DA():
         p = p0 + DA(1)
         x = x0
         i = 1
-        while i <= 4:
+        while i <= DA.getMaxOrder():
             x = Nf(x, p)
             i *= 2
 
@@ -189,10 +190,64 @@ def test_Implicit_solver_DA():
         print(f"Test: Full DA Newton\n{x}\n{x}\n")
         return (x)
 
-    test_da = ex4_2_1(1.0)
+    test_da = ex4_2_1(p0,x0)
     assert test_da == root_da
     return
 
+def test_Implicit_solver_DAVec():
+    """Root function for testing
+    Basic Test for Independant vector inputs 
+    DA independent inputs
+
+    """
+    DA.init(4, 6) # When greater than 4th order theres an error - Its todo with the .inv() function for inverse jacobian - seems to be an inherent part of DA library
+    p = 1.0 + DA(1)
+    def f(x_da):
+        return x_da**2 - p
+    # Initialize DA variables
+
+    # Set initial guess and parameters
+    x_init = array([1.0, 1.0, 1.0])
+    p = array([1.0 + DA(1), 1.0 + DA(2), 1.0 + DA(3)])
+
+    # Call implicit_solver_DAVec
+    root_da = Implicit_solver_DAVec(x_init, p, f, 3, x0DA=False, DAIOD=False)
+
+    # Check result
+    assert isinstance(root_da, array)
+    assert len(root_da) == 3
+    assert np.allclose(root_da.cons(), [1.0, 1.0, 1.0], atol=1e-6)
+    coeff = root_da[0].getCoefficient([4,0,0,0,0,0])
+    assert np.allclose(coeff, -3.90625e-02, atol=1e-6)
+    # Print the result
+    print(f"Root: {root_da}")
+
+def test_Implicit_solver_DAVecComplex():
+    """Root function for testing
+    Basic Test for Independant vector inputs 
+    DA independent inputs
+    
+    """
+    DA.init(4, 6)  # When greater than 4th order theres an error - Its todo with the .inv() function for inverse jacobian I think
+    def f(x_da):
+        return x_da**2 - p
+    # Initialize DA variables
+
+    # Set initial guess and parameters
+    x_init = array([1.0, 2.0, 3.0])         #Must have a resonable initial guess
+    p = array([1.0 + DA(1), 2.0 + DA(2), 3.0 + DA(3)])
+
+    # Call implicit_solver_DAVec
+    root_da = Implicit_solver_DAVec(x_init, p, f, 3, x0DA=False, DAIOD=False)
+
+    # Check result
+    assert isinstance(root_da, array)
+    assert len(root_da) == 3
+    assert np.allclose(root_da.cons(), [1.0, 1.0, 1.0], atol=1e-6)
+    coeff = root_da[0].getCoefficient([4,0,0,0,0,0])
+    assert np.allclose(coeff, -3.90625e-02, atol=1e-6)
+    # Print the result
+    print(f"Root: {root_da}")
 
 def test_lambert_battin_DA():
     """

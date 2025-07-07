@@ -28,7 +28,7 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
     DA compatiable 
     :params :r1 Initial Position (Vector: 3x1, [i j k]')
     :params :r2 Final Position (Vector: 3x1, [i j k]')
-    :params :dt Time of flight between two points 
+    :params :dt Time of flight between two points in seconds
     :params :mu Standard Gravitional Parameter
 
     :returns :velocities. An array of [(v1, v2), (v1,v2)] depending on the number of revolutions

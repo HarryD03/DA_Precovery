@@ -3,6 +3,7 @@ from typing import Union
 from daceypy import DA, array
 import daceypy.op as op
 from numpy.typing import NDArray
+from scipy.linalg import lu_factor, lu_solve      # or numpy.linalg for tiny systems
 
 def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
     """
@@ -258,8 +259,8 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
     #obtain the [r1,r2,r3] [range1,range2,range3]. Rows are the real root, columns are positions
     position = np.array([r_1, r_2, r_3]).T
     ranges = np.array([range_1, range_2, range_3]).T
-
-    return position, ranges
+    range_mag = np.hstack([range_1_mag, range_2_mag, range_3_mag])
+    return position, ranges, range_mag
 
 
 #
@@ -445,25 +446,50 @@ def battin_x_DA(r1_da: Union[array,NDArray], r2_da: Union[array,NDArray], dt: fl
     return x_da
 
 def Nf(x, f, df):
-    k = DA.getMaxVariables()        
+#Newton iteration
+    #x is a scalar value   
+    if isinstance(x, DA):
+        k = DA.getMaxVariables() 
+        f = f.plug(k,0)
+        df = df.plug(k,0)
 
-    f = f.plug(k,0)
-    df = df.plug(k,0)
+        if np.allclose(df, 0):
+            raise ZeroDivisionError("Derivative is zero in Newton iteration")  
+        x1 = x - (f / df)    # f /df 
+        return x1
+    
+    #x is an array x = [x1, x2, x3]
+    #f is the callable function
+    #df is the inverse Jacobian of f wrt x
+    
+    if isinstance(x,array) and isinstance(df[0][0], float):         #DAIOD case
+        step = df @ f.cons()       
+        x1 = x - step
+        return x1
+    
+    if isinstance(x,array) and isinstance(df[0][0], DA):         #Higer Order Map case
+        k = DA.getMaxVariables()
+        NumVar = len(x) 
+        DAVar = k - NumVar + 1
+        for i in range(NumVar):
+            f = f.plug(DAVar + i, 0)
+            for j in range(NumVar):
+                df[i][j] = df[i][j].plug(DAVar + j,0)
 
-    if np.allclose(df, 0):
-        raise ZeroDivisionError("Derivative is zero in Newton iteration")
-    x1 = x - f/df    
-    return x1
+        step = df @ f
+        x1 = x - step
+        return x1
 
-def Implicit_solver_DA(x_da: Union[float,DA], f: callable):
+def Implicit_solver_DA(x_da: Union[float,DA], p, f: callable):
         """
-            X needs to be the last DA variable
-                x_da: Dependant Variable (x_nom + DA(x)) - need to be initalised prior
+            X needs to bethe last DA variable
+                x_da: Dependant Variable 
                 p_da: Independant DA Variables (p_nom + DA(p_da))
-                f: Function for Newtons method
+                f:    Function for Newtons method
             Return
                 x_da as a function of DA(p_da). x_da = x_nom + DA(p_da)
         """
+     
         i = 1
         k = DA.getMaxVariables()
         x_da = x_da + DA(k)
@@ -476,6 +502,56 @@ def Implicit_solver_DA(x_da: Union[float,DA], f: callable):
           i *= 2
 
         x_da = x_da.plug(k,0)
+        return x_da
+
+def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables, x0DA=True, DAIOD=False):
+    """
+    Conduct the Implicit Solver (Newton Iteration) for multi-variables inputs.
+    params: x_da: array of initial variables
+            p: array of dependant variables
+            f: function to solve - i.e. f(x_da; p) = 0 
+            NumVariables: number of variables for Newton iterations
+    return: x_da: root soultion of f(x_da; p) = 0 (array) 
+    """
+    k = DA.getMaxVariables() - NumVariables + 1
+    #Initialise Variables for Automatic differentiation
+    for i in range(NumVariables):
+        x0[i] = x0[i] + DA(k+i)
+    
+    #Calculate the Jacobian of the callable funtion f wrt to the DA variables
+    def Jac(fx):        #Calculate the Jacobian of the Matrix f(x; p). f(x)/DA(1)
+        Jac = np.zeros((NumVariables,NumVariables), dtype=object)
+        for i in range(NumVariables):
+            for j in range(NumVariables):
+                Jac[i][j] = fx[i].deriv(k+j)
+        return array(Jac)                            #Retun Jacobian Matrix (DA)
+    
+    #Newton Iteration - to obtain x = x0 + M(p)
+    iter = 1
+    if DAIOD == True:                       #DAIOD Range specific Newton Iteration (constant inverse Jacobian at x(0))
+        Jac = Jac(f(x0))
+        assert np.linalg.det(Jac.cons()) != 0   #Check that Jacobian is invertible
+        J0inv = Jac.inv()
+
+        while iter <= (DA.getMaxOrder()):
+            x_da = Nf(x0, f(x0), J0inv)
+            iter *= 2
+    else: 
+        while iter <= (DA.getMaxOrder()):   #Higher Order Taylor Map Newton Iteration (Recalculate Inverse Jacobian at each iteration for HOTM solution)
+            x_da = Nf(x0, f(x0), Jac(f(x0)).inv())
+            print(x_da)
+            iter *= 2
+            x0 = x_da
+
+    #Extract the root solution
+
+    if x0DA:        #Return all DA parts in the solution: x = x0 + M(p,x)
+         return x_da
+    
+    else:           #Return  x = x0 + M(p)
+        for i in range(NumVariables):
+            k = DA.getMaxVariables() - NumVariables + i
+            x_da[i] = x_da[i].plug((k+1),0)
         return x_da
 
 def battin_vel_DA(r1: Union[array,NDArray], r2: Union[array,NDArray], a: Union[DA,float], dE: Union[DA,float], dt: float, mu: float) -> DA:
@@ -520,7 +596,7 @@ def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[a
 
         return r2, v2
 
-def newton_nomial_DA(x0, p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float) -> float:
+def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float) -> float:
     """
     Newtons Method applied to DA to obtain Nomial Solution for dependant variable
     DA must have been initialised Prior

@@ -319,12 +319,14 @@ def test_householder_iter_DA_nom():
 def test_householder_iter_DA_Map_basic():
     """Check mapping sensitivity for x^2=p around p=2."""
     DA.init(4, 2)
+    
     p = 2 + DA(1)
     def f(x):
         return x*x - p
     
     x_nom = householder_iter_DA_nom(1.0, f, 2)
-    x_da = householder_iter_DA_Map(x_nom, 2, f)
+    print(x_nom)
+    x_da = householder_iter_DA_Map(1.0, 2, f)
     assert np.isclose(x_da.cons(), np.sqrt(2), atol=1e-6)
     # derivative dx/dp should be 1/(2*sqrt(2))
     deriv = x_da.deriv(1).cons()
