@@ -23,7 +23,7 @@ def Nf(x, p):
 def ex4_1_3():
 
     tol = 1e-14       # tolerance
-    p0 = 1.0          # expansion point
+    p0 = 2.0          # expansion point
     x0 = 1.0          # initial guess
     p = p0 + DA(1)    # DA parameter
     x = DA(x0)        # DA initial guess
@@ -149,10 +149,10 @@ def main():
 
     DA.init(order, 2)  # init with maximum computation order
 
-    #ex4_1_3()
+    ex4_1_3()
    # ex4_1_4()
 
-    ex4_2_1(1.0)
+    #ex4_2_1(2.0)
     #ex4_2_2(0.0, 0.5)
 
 

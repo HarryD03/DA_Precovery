@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F, Implicit_solver_DAVec
+from Aphopis_Armillien.utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F, Implicit_solver_DAVec, newton_nomial_DAVec
 from typing import Union
 from daceypy import DA, array
 import daceypy.op as op
@@ -336,3 +336,27 @@ def test_newton_nomial_DA():
     assert np.isclose(dE_nom_kepler, dE_nom_newton, atol = 1e-9), f"Newton Function:{dE_nom_newton}\nIntegrated Function: {dE_nom_kepler}\n"
 
     #Assert same 
+
+
+def test_newton_nomial_DAVec():
+    # Define a test function
+    def f(x):
+        return x**2 - p
+
+    DA.init(4, 4)
+    # Define the initial guess and parameters
+    x0 = np.array([1.0, 1.0])
+    p = array([2.0 + DA(1), 2.0 + DA(2)])
+
+    # Define the tolerance and maximum number of iterations
+    tol = 1e-16
+    MaxIter = 10000
+
+    # Call the newton_nomial_DAVec function
+    result = newton_nomial_DAVec(x0, p, f, tol, MaxIter)
+
+    # Check the result
+    assert np.allclose(result, np.array([1.42, 1.42]), atol=1e-2)
+
+    # Print the result
+    print("Result:", result)

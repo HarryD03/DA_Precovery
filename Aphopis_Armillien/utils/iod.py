@@ -4,6 +4,8 @@ from daceypy import DA, array
 import daceypy.op as op
 from numpy.typing import NDArray
 from scipy.linalg import lu_factor, lu_solve      # or numpy.linalg for tiny systems
+import scipy.linalg as la
+
 
 def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
     """
@@ -462,8 +464,8 @@ def Nf(x, f, df):
     #f is the callable function
     #df is the inverse Jacobian of f wrt x
     
-    if isinstance(x,array) and isinstance(df[0][0], float):         #DAIOD case
-        step = df @ f.cons()       
+    if isinstance(x,array) and isinstance(df[0][0], float):      #DAIOD case (Csnt Jacobian)
+        step = df @ f      
         x1 = x - step
         return x1
     
@@ -504,7 +506,7 @@ def Implicit_solver_DA(x_da: Union[float,DA], p, f: callable):
         x_da = x_da.plug(k,0)
         return x_da
 
-def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables, x0DA=True, DAIOD=False):
+def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables, x0DA=True, DAIOD=False, JacDAIOD=0):
     """
     Conduct the Implicit Solver (Newton Iteration) for multi-variables inputs.
     params: x_da: array of initial variables
@@ -513,45 +515,51 @@ def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables
             NumVariables: number of variables for Newton iterations
     return: x_da: root soultion of f(x_da; p) = 0 (array) 
     """
-    k = DA.getMaxVariables() - NumVariables + 1
-    #Initialise Variables for Automatic differentiation
-    for i in range(NumVariables):
-        x0[i] = x0[i] + DA(k+i)
-    
-    #Calculate the Jacobian of the callable funtion f wrt to the DA variables
     def Jac(fx):        #Calculate the Jacobian of the Matrix f(x; p). f(x)/DA(1)
         Jac = np.zeros((NumVariables,NumVariables), dtype=object)
         for i in range(NumVariables):
             for j in range(NumVariables):
                 Jac[i][j] = fx[i].deriv(k+j)
-        return array(Jac)                            #Retun Jacobian Matrix (DA)
+        return array(Jac) 
     
-    #Newton Iteration - to obtain x = x0 + M(p)
     iter = 1
-    if DAIOD == True:                       #DAIOD Range specific Newton Iteration (constant inverse Jacobian at x(0))
-        Jac = Jac(f(x0))
-        assert np.linalg.det(Jac.cons()) != 0   #Check that Jacobian is invertible
-        J0inv = Jac.inv()
 
-        while iter <= (DA.getMaxOrder()):
-            x_da = Nf(x0, f(x0), J0inv)
-            iter *= 2
-    else: 
+    if DAIOD == False:
+        k = DA.getMaxVariables() - NumVariables + 1
+        #Initialise Variables for Automatic differentiation
+        for i in range(NumVariables):
+            x0[i] = x0[i] + DA(k+i)
+        
         while iter <= (DA.getMaxOrder()):   #Higher Order Taylor Map Newton Iteration (Recalculate Inverse Jacobian at each iteration for HOTM solution)
             x_da = Nf(x0, f(x0), Jac(f(x0)).inv())
             print(x_da)
             iter *= 2
             x0 = x_da
-
-    #Extract the root solution
-
-    if x0DA:        #Return all DA parts in the solution: x = x0 + M(p,x)
-         return x_da
+        
+        if x0DA:        #Return all DA parts in the solution: x = x0 + M(p,x)
+            return x_da
     
-    else:           #Return  x = x0 + M(p)
-        for i in range(NumVariables):
-            k = DA.getMaxVariables() - NumVariables + i
-            x_da[i] = x_da[i].plug((k+1),0)
+        else:           #Return  x = x0 + M(p)
+            for i in range(NumVariables):
+                k = DA.getMaxVariables() - NumVariables + i
+                x_da[i] = x_da[i].plug((k+1),0)
+            return x_da
+    
+        #Calculate the Jacobian of the callable funtion f wrt to the DA variables
+    
+    #Newton Iteration - to obtain x = x0 + M(p)
+    if DAIOD == True:                       #DAIOD Range specific Newton Iteration (constant inverse Jacobian at x(0))
+        assert np.linalg.det(JacDAIOD) != 0   #Check that Jacobian is invertible
+        #Conduct Numerical Inversion of the Jacobian
+        L, Pivot = la.lu_factor(JacDAIOD)
+        J0inv = la.lu_solve((L, Pivot), np.eye(JacDAIOD.shape[0]))
+
+        #DA Newton loop
+        while iter <= (DA.getMaxOrder()):
+            x_da = Nf(x0, f(x0), J0inv)
+            iter *= 2
+            x0 = x_da
+        
         return x_da
 
 def battin_vel_DA(r1: Union[array,NDArray], r2: Union[array,NDArray], a: Union[DA,float], dE: Union[DA,float], dt: float, mu: float) -> DA:
@@ -630,8 +638,64 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
             flag = False
             raise(f"Maximum Number of Iterations reached")
 
-    return x.cons()
+    return x
 
+
+def newton_nomial_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float) -> float:
+    """
+    Newtons Method applied to DA to obtain Nomial Solution for dependant variable
+    DA must have been initialised Prior
+
+    :param x0: Initial guess 
+    :param p: Everything other variable in f
+    :parma f: Callable function f(x; p) = 0 which will be evaluated at every newton iteration
+    :return: Nomial solution for x as a Taylor Polynomial series 
+    """
+    NumVariables = len(x0)
+    k = DA.getMaxVariables() - NumVariables + 1
+    #Initialise Variables for Automatic differentiation
+    x = np.zeros_like(x0, dtype=object)
+    for i in range(NumVariables):
+        x[i] = DA(x0[i]) + DA(k+i)
+    
+    flag = True
+    iter = 1
+
+    while flag:
+        F = f(x)
+
+        Jac = np.zeros((NumVariables,NumVariables), dtype=object)
+        for i in range(NumVariables):
+            for j in range(NumVariables):
+                Jac[i][j] = F[i].deriv(k+j)
+        
+        Jac = array(Jac)
+
+        for i in range(NumVariables):
+            F[i] = F[i].plug(k+i, 0)
+            for j in range(NumVariables):
+                Jac[i][j] = Jac[i][j].plug(k+i, 0)
+
+        assert np.linalg.det(Jac.cons()) != 0, "Jacobian is singular, therefore invertable"
+        
+        x1 = x - (Jac.inv() @ array(F))
+        x1 = array(x1)
+        iter += 1
+
+        print(iter)
+        difference = (x1-x).vnorm()
+
+        print(difference.cons())
+        if all(x < tol for x in f(x1).cons()):
+            flag = False
+
+        if iter > MaxIter:
+            flag = False
+            print(f"Maximum Number of Iterations reached")
+        
+        x = x1
+
+    return x
 def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
     """
     Kepler's equation F(dE) = dE + (sigma/sqrt(a)) * (1 - cos(dE) - (1- r1/a)*sin(dE))
