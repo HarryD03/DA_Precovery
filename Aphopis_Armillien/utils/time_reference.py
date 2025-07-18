@@ -206,15 +206,63 @@ def get_earth_ephemeris(years, months, days, uts):
 
     return earth_ephemeris
 
-def CC2MEE(r: NDArray, v: NDArray) -> NDArray:
+def CC2MEE(r: Union[NDArray, array], v: Union[NDArray, array], mu) -> Union[array, NDArray]:
     """
     Function for converting Cartesian coordinates to Modified Equinoctial Elements (MEE).
     DA compatible version
+    params:
+    r: Position vector [i,j,k] around the center of mass of the body defined by mu
+    v: Velocity vector [i,j,k] around the center of mass of the body defined by mu
+    mu: Gravitational parameter of the central body
+    return:
+    MEE: Modified Equinoctial Elements (MEE) in the form of a 7x1 array [semi-latus rectum, f, g, h, k, L]
     """
     assert r.shape == v.shape, "Position and velocity vectors must have the same shape"
- 
+    
+    COE = CC2COE(r, v, mu)  # Gravitational parameter for Earth in km^3/s^2
+    a, ecc, inc, RAAN, argp, TA = COE
+    
+    p = a * (1 - ecc**2)  # Semi-latus rectum
+    if p <= 0:
+        raise ValueError("Computed p <= 0; check a and e consistency.")
+    
+    f = ecc* op.cos(argp + RAAN)  # Modified Equinoctial Element f
+    g = ecc* op.sin(argp + RAAN)  # Modified Equinoctial Element g
+    h = op.tan(inc/2) * op.cos(RAAN)
+    k = op.tan(inc/2) * op.sin(RAAN)
+    L = RAAN + argp + TA  # Modified Equinoctial Element L
+    
+    if isinstance(r, array):
+        MEE = array([p, f, g, h, k, L])
+    elif isinstance(r, NDArray):
+        MEE = np.array([p, f, g, h, k, L])
+    else:
+        raise TypeError("Input must be a DA array or numpy array")
 
-    return
+    return MEE
+
+def MEE2CC(MEE, mu):
+    """
+    Function for converting Modified Equinoctial Elements (MEE) to Cartesian coordinates.
+    """
+    p, f, g, h, k, L = MEE
+
+    a = p / (1 - op.sqr(f**2) - op.sqr(g**2))
+    e = op.sqrt(f**2 + g**2)
+    inc = op.atan2(2*op.sqrt(op.sqr(h) + op.sqr(k), (1-op.sqr(h)-op.sqr(k))))
+    argp = op.atan2(gh - fk, fh + gk)
+    RAAN = op.atan2(k,h)
+    TA = L - op.atan(g/f)
+    u = op.atan2(h*op.sin(L) - k*op.cos(L), h*op.cos(L) + k*op.sin(L))
+
+    if isinstance(MEE,array):
+        COE = array([a, e, inc, RAAN, argp, TA])             
+    if isinstance(MEE, NDArray)
+        COE = np.array([a, e, inc, RAAN, argp, TA])
+    
+    r, v = COE2CC(COE, mu)
+
+    return r, v
 
 def CC2COE(r: Union[array, NDArray], v: Union[array, NDArray], mu) -> Union[NDArray,array]:
     """
