@@ -26,8 +26,8 @@ from time import perf_counter
 #   1. Implement a Method to convert between RA and DEC errors to Helocentric coordinate errors. RA_DEC_2_Helocentric()
 #   1b. Create a Carteisan Helocentric -> Earth RA_DEC_Range function (to assess the range,range rate phase space)
 #   2. Ensure 3 sigma scaling is implemented correctly. done
-#   3. ADS for the inital Domain
-#   4. ADS for the propagated Domain (done)
+#   3. ADS for the inital Domain. done
+#   4. ADS for the propagated Domain (done). done
 
 """
     This file contains the implementation of the DA_IOD algorithm without Automatic Domain splitting. 
@@ -377,12 +377,17 @@ def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[
 
     return rv, range_mag
 
-def DAIOD_ADS(domain: ADS, RA, DEC, range_mag, r_obs_heliocentric, t_obs_s, mu):
+def DAIOD_ADS(domain: ADS, range_mag, r_obs_heliocentric, t_obs_s, mu):
+    "Conduct ADS compatible DAIOD"
+    #decompose domain into RA and DEC
+    print("There are an {} number of indices.".format("even" if len(domain) % 2 == 0 else "odd"))
+
+    half = len(domain) // 2
+    RA = domain[:,half].box
+    DEC = domain[half+1,:].box
 
     rv, _ = DAIOD(RA, DEC, range_mag, r_obs_heliocentric, t_obs_s, mu)
-    #obtain range rate as a function of DA(range)
 
-    #domain is [range,rangerate]
     return ADS(domain.box, domain.nsplit, rv)
 
 # ------------------------------------------------------------------------------------------------------
@@ -405,7 +410,7 @@ body = 'sun'
 
 #Telescope characteristics - Input as arcsecs
 three_sigmasRA = np.array([1, 1, 1]) * u.arcsec
-three_sigmasDA = np.array([1, 1, 1]) * u.arcsec
+three_sigmasDEC = np.array([1, 1, 1]) * u.arcsec
 
 order = 4
 # -----------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -440,144 +445,36 @@ t_obs_s = t_obs_J0.to(u.s).value
 r_obs_earth = time_reference.equatorial_to_eclipitcJ2000(dr, LST_deg.to(u.rad).value, h_e)         #placeholder values
 
 r_obs_heliocentric = earth_pos_helio + r_obs_earth                                                 #observation position from sun in heliocentric frame
+
 #----------------------------------------------------------------------------------------
 ## Start DA_IOD
 #----------------------------------------------------------------------------------------
 
+#Generate RA and DEC to 
+RA = RA_deg.to(u.rad).value
+DEC = DEC_deg.to(u.rad).value
+
+#Obtain Precision Error in radians
+three_sigmasRA = three_sigmasRA.to(u.rad).value
+three_sigmasDEC = three_sigmasDEC.to(u.rad).value
+
 #Generate Guass seed DA_IOD part 1
+i_rho = time_reference.create_da_los_vectors(RA, DEC)
+_,_,range_mag = iod.Guass_8th_seed(r_obs_heliocentric, i_rho, t_obs_s, mu)
 
-i_rho = time_reference.create_da_los_vectors(RA_deg.to(u.rad).value, DEC_deg.to(u.rad).value)          #returns 3x3 matrix                         #Line of sight unit vector
-_, _, range_mag = iod.Guass_8th_seed(r_obs_heliocentric, i_rho, t_obs_s, mu)   #Obtain nomial states from Guass_8th_seed function (3x1)
+#DAIOD part 1 - Guassian range before lambert refinement 
+DA.init(order,3)
+range_mag_DA = array([range_mag[0] + DA(1), range_mag[1] + DA(2), range_mag[2] + DA(3)])   # range is 'x' in the implicit solver, move the DA initialisation inside the solver
+_, range_mag = DAIOD(RA, DEC, range_mag_DA, r_obs_heliocentric, t_obs_s, mu)               # First run of DAIOD
 
-DA.init(order, 3)
-range_mag = array([range_mag[0] + DA(1), range_mag[1] + DA(2), range_mag[2] + DA(3)])   # range is 'x' in the implicit solver, move the DA initialisation inside the solver
+#DAIOD part 2 - range after lambert refinement
+DA.init(order,6)
+RA_DA = array([RA[i] + three_sigmasRA[i].to(u.rad).value*DA(i + 1) for i in range(3)])
+DEC_DA = array([DEC[i] + three_sigmasDEC[i].to(u.rad).value*DA(i + 4) for i in range(3)])    # Scale RA and DEC DA part so that when evaluated its within the [-1,1] range
+X_0, _ = DAIOD(RA_DA, DEC_DA, range_mag, r_obs_heliocentric, t_obs_s, mu)
 
-#Lambert Arc part 1 - DAIOD part 2
-def f(range_mag):                                       #deltV = residual + M(dranges)
-    
-    """
-    f(range_vec) returns the velocity difference between the second and first velocity estimates
-    for the central observation. The velocity difference is calculated by first calculating the
-    positions of the observations using the range vector and the observer position. The positions
-    are then used to calculate the velocities between each observation via the Izzo solution to
-    Lambert's problem. The velocity difference is then calculated as the difference between the
-    second and first velocity estimates. This function is used in the Newton method to find the
-    root of the velocity difference.
-    """
-    range_vec = np.zeros_like(i_rho)
-    for i in range(0, len(range_mag)):
-        range_vec[:,i] = op.dot(range_mag[i], i_rho[:,i])
+#X_0 represents the initial mainfold
 
-    r_vec = np.zeros_like(range_vec)
-    for i in range(0, len(range_vec)):                  #define posiiton vector for lamber_izzo
-        r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
-
-    vel = []
-    for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
-        velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
-
-        #unpack solutions 
-        solution = velocities[0]
-
-        v1 = solution[:,i]
-        v2 = solution[:,i+1]
-
-        print(f"v1: {v1.cons()}\n")                 #debugging purposes
-        print(f"v2: {v2.cons()}\n")                 #debugging purposes
-
-        vel.append(v1)
-        vel.append(v2)
-
-    # Centre posiitons should have zero velocity difference
-    v2_plus = vel[2]                
-    v2_minus = vel[1]
-
-    DV = (v2_plus - v2_minus)
-
-    return DV                           #DV = [dv_i, dv_j, dv_k] + M(dranges)
-
-flag = True
-range_mag0 = range_mag
-iter = 1
-
-while flag:
-    tol = 1e-8
-    iter += 1
-    range_mag_L1 = iod.newton_nomial_DAVec(range_mag0, np.zeros_like(range_mag), f, 1e-16, 100) 
-
-    #Evalute the Polynomial at DV = 0 
-
-    difference = (range_mag_L1 - range_mag0).vnorm()
-    if difference.cons() < tol:
-        print(f"Iteration Number: {iter}\n")
-        range_mag_L1_Jac = range_mag_L1.linear()      #extract jacobian part
-        range_mag_L1_csnt = range_mag_L1.cons()       #extract constant
-        flag = False
-
-
-#Lambert Arc part 2 - Now correct range has been obtained, find state in terms of observations
-DA.init(order, 6)
-
-RA_rad_DA = array([RA_deg[i].to(u.rad).value + three_sigmasRA[i].to(u.rad).value*DA(i + 1) for i in range(3)])
-DEC_rad_DA = array([DEC_deg[i].to(u.rad).value + three_sigmasDA[i].to(u.rad).value*DA(i + 4) for i in range(3)])
-# Scale RA and DEC DA part so that when evaluated its within the [-1,1] range
-
-
-i_rho = time_reference.create_da_los_vectors(RA_rad_DA, DEC_rad_DA)          #returns 3x3 matrix   
-                      #Line of sight unit vector
-range_vec = op.dot(range_mag_L1_csnt, i_rho)                         #Taylor Polynomial Map
-
-def f1(range_vec):
-    """
-    Delta V Function for Angle Variables
-    """
-
-    r_vec = np.zeros_like(range_vec)
-    for i in range(0, len(range_vec)):
-        r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
-
-    vel = []
-    for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
-        velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
-
-        #unpack solutions 
-        solution = velocities[0]
-
-        v1 = solution[:,i]
-        v2 = solution[:,i+1]
-
-        print(f"v1: {v1.cons()}\n")                 #debugging purposes
-        print(f"v2: {v2.cons()}\n")                 #debugging purposes
-
-        vel.append(v1)
-        vel.append(v2)
-
-    # Centre posiitons should have zero velocity difference
-    v2_plus = vel[2]                
-    v2_minus = vel[1]
-
-    DV = (v2_plus - v2_minus)
-
-    return DV
-
-range_vec_anglesDA = iod.Implicit_solver_DAVec(range_vec, 0, f1, 6, x0DA=False, DAIOD=True, JacDAIOD=range_mag_L1_Jac)
-
-r_vec = np.zeros_like(range_vec)
-for i in range(0, len(range_vec)):
-    r_vec[:,i] = range_vec_anglesDA[:,i] + r_obs_heliocentric[:,i]
-
-velocities = []
-
-velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, cw=False)
-solution = velocities[0]
-
-v1 = solution[:,0]
-v2 = solution[:,1]
-
-print(f"v1: {v1.cons()}\n")                 #debugging purposes
-print(f"v2: {v2.cons()}\n")                 #debugging purposes
-
-X_0 = array([r_vec[:,1], v2])               #Define Epoch state of arc - DA parts correspond to observation uncertanity 
 
 #----------------------------------------------------------------------------------------
 ## End DA_IOD
@@ -585,20 +482,28 @@ X_0 = array([r_vec[:,1], v2])               #Define Epoch state of arc - DA part
 ## ADS check of Initial Domain
 #----------------------------------------------------------------------------------------
 
-#Domain: [range_min, range_max] x [rangerate_min, rangerate_max]
+#Domain: [Angles RA and Dec]
 #Initial domain is obtained through converting rv (DA=angles) -> range and range rate 
+domain0 = RA.concat(DEC)
 
-toll = 1e-5
+r_tol = 1                   # 1 meter position tolerance
+v_tol = 1e-3                # 1mm/s velocity tolerance
+tol_vec = np.array([r_tol] * 3 + [v_tol] * 3)
 Nmax = 10
-init_domain = ADS(X_0, [])
+init_domain = ADS(domain0, [])          #This will be the Angle initialisations variables
+
 init_list = [init_domain]
 final_lists = []
-final_list = init_list.copy()
-final_lists.append(final_list) # add also initial domains
+final_list = X_0.copy()
+final_lists.append(final_list) # add also initial domains; just done for plot. 
 
-final_list = ADS.eval(
-        final_list, toll, Nmax,
-        DAIOD)
+final_list = ADS.eval(init_list, tol_vec, Nmax, lambda domain: DAIOD_ADS(domain, range_mag, r_obs_heliocentric, t_obs_s, mu))
+final_lists = final_lists.append(final_list)
+
+#Final lists should contain the split subdomains and the initial domain. 
+
+
+
 
 
 
