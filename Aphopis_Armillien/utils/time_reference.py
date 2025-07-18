@@ -206,6 +206,8 @@ def get_earth_ephemeris(years, months, days, uts):
 
     return earth_ephemeris
 
+# ------------------- Coordinate Transformations -----------------------------
+
 def CC2MEE(r: Union[NDArray, array], v: Union[NDArray, array], mu) -> Union[array, NDArray]:
     """
     Function for converting Cartesian coordinates to Modified Equinoctial Elements (MEE).
@@ -257,7 +259,7 @@ def MEE2CC(MEE, mu):
 
     if isinstance(MEE,array):
         COE = array([a, e, inc, RAAN, argp, TA])             
-    if isinstance(MEE, NDArray)
+    if isinstance(MEE, NDArray):
         COE = np.array([a, e, inc, RAAN, argp, TA])
     
     r, v = COE2CC(COE, mu)
@@ -380,7 +382,6 @@ def CC2COE(r: Union[array, NDArray], v: Union[array, NDArray], mu) -> Union[NDAr
 
         COE = [a, ecc, inc, RAAN, om, TA]
         return COE
-
 
 def COE2CC(COE, mu):
     """
