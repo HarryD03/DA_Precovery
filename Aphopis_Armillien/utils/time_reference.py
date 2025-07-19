@@ -149,9 +149,8 @@ def equatorial_to_eclipitcJ2000(dr: float, lst: NDArray, h_e: float) -> float:
         [0, np.cos(di_rad), np.sin(di_rad)],
         [0, -np.sin(di_rad), np.cos(di_rad)]
     ])
-    r_obs_ec = np.zeros((3,3))
-    for i in range(0, 3):
-        r_obs_ec[:,i] = R @ r_obs_eq[:,i]
+
+    r_obs_ec = R @ r_obs_eq
 
     return r_obs_ec
 
@@ -224,7 +223,10 @@ def CC2MEE(r: Union[NDArray, array], v: Union[NDArray, array], mu) -> Union[arra
     COE = CC2COE(r, v, mu)  # Gravitational parameter for Earth in km^3/s^2
     a, ecc, inc, RAAN, argp, TA = COE
     
-    p = a * (1 - ecc**2)  # Semi-latus rectum
+    if ecc < 1:
+        p = a * (1 - ecc**2)  # Semi-latus rectum
+    if ecc > 1:
+        p = a * (ecc**2 -1)
     if p <= 0:
         raise ValueError("Computed p <= 0; check a and e consistency.")
     
@@ -236,7 +238,7 @@ def CC2MEE(r: Union[NDArray, array], v: Union[NDArray, array], mu) -> Union[arra
     
     if isinstance(r, array):
         MEE = array([p, f, g, h, k, L])
-    elif isinstance(r, NDArray):
+    elif isinstance(r[0], float):
         MEE = np.array([p, f, g, h, k, L])
     else:
         raise TypeError("Input must be a DA array or numpy array")
@@ -252,7 +254,7 @@ def MEE2CC(MEE, mu):
     a = p / (1 - op.sqr(f**2) - op.sqr(g**2))
     e = op.sqrt(f**2 + g**2)
     inc = op.atan2(2*op.sqrt(op.sqr(h) + op.sqr(k), (1-op.sqr(h)-op.sqr(k))))
-    argp = op.atan2(gh - fk, fh + gk)
+    argp = op.atan2(g*h - f*k, f*h + g*k)
     RAAN = op.atan2(k,h)
     TA = L - op.atan(g/f)
     u = op.atan2(h*op.sin(L) - k*op.cos(L), h*op.cos(L) + k*op.sin(L))
@@ -280,7 +282,6 @@ def CC2COE(r: Union[array, NDArray], v: Union[array, NDArray], mu) -> Union[NDAr
     assert r.shape == v.shape, "Position and velocity vectors must have the same shape"
     assert r.shape[0] == 3, "Position vector must be a 3D vector"
     assert v.shape[0] == 3, "Velocity vector must be a 3D vector"
-    assert isinstance(r, (array, NDArray)), "Position vector must be a DA array or numpy array"
     
     if isinstance(r, array):
         r_norm = r.vnorm()
@@ -326,21 +327,22 @@ def CC2COE(r: Union[array, NDArray], v: Union[array, NDArray], mu) -> Union[NDAr
         
         om = op.acos(N.dot(ecc_vec) / (N_norm * ecc))
         if ecc_vec[2].cons() < 0:
-            om = 2*pi - om
+            om = 2*np.pi - om
 
         TA = op.acos( (ecc_vec.dot(r))/ (ecc * r_norm) )
         if v_radial.cons() < 0:
-            TA = 2*pi - TA
+            TA = 2*np.pi - TA
 
         COE = [a, ecc, inc, RAAN, om, TA]
         return COE
     
-    elif isinstance(r, NDArray):
+    elif isinstance(r[0], float):
         r_norm = np.linalg.norm(r)
         v_norm = np.linalg.norm(v)
         iK = np.array([0, 0, 1])
 
         v_radial = np.dot(r, v) / r_norm 
+        
         if v_radial > 0:
             print("Satellite Flying away from Perigee")
         elif v_radial < 0:
@@ -353,10 +355,11 @@ def CC2COE(r: Union[array, NDArray], v: Union[array, NDArray], mu) -> Union[NDAr
         h_norm = np.linalg.norm(h) 
         h_z = h[2]
 
-        ecc_vec = (1/mu) * ((v_norm**2 - mu/r_norm) * r - (r*v_radial) * v)
+        ecc_vec = (1/mu) * ((v_norm**2 - mu/r_norm) * r - (np.dot(r, v)) * v)
         ecc = np.linalg.norm(ecc_vec)
 
-        specfic_energy = v_norm**2/2 - mu/r
+        specfic_energy = v_norm**2/2 - mu/r_norm
+        
         if ecc != 1:
             a = -mu/(2*specfic_energy)
             p = a*(1-ecc**2)
@@ -372,15 +375,19 @@ def CC2COE(r: Union[array, NDArray], v: Union[array, NDArray], mu) -> Union[NDAr
             RAAN = np.arccos(N_i/N_norm)
         else:
             RAAN = 2*np.pi - np.arccos(N_i/N_norm)
+
         inc = np.arccos(h_z/h_norm)
+
         om = np.arccos(np.dot(N, ecc_vec) / (N_norm * ecc))
         if ecc_vec[2] < 0:
             om = 2*np.pi - om
+       
         TA = np.arccos( (np.dot(ecc_vec, r))/ (ecc * r_norm) )
         if v_radial < 0:
             TA = 2*np.pi - TA
 
-        COE = [a, ecc, inc, RAAN, om, TA]
+        
+        COE = np.array([a, ecc, inc, RAAN, om, TA])
         return COE
 
 def COE2CC(COE, mu):
@@ -397,28 +404,33 @@ def COE2CC(COE, mu):
 
     a, ecc, inc, RAAN, om, TA = COE
 
-    if ecc < 1.0:
-
-    # Compute the semi-latus rectum
-        p = a * (1 - ecc**2)
-    elif ecc > 1.0:
-        p = a * (ecc**2 -1)
+    if ecc < 1:
+        h = op.sqrt(mu*a*(1-ecc**2))
+    elif ecc > 1:
+        h = op.sqrt(mu*a*(ecc**2-1))
     else:
-        raise ValueError("Parabolic case (e=1) unavailable")
-
-    if p <= 0:
-        raise ValueError("Computed p <= 0; check a and e consistency.")
+        raise ValueError("Parabolic case not complete")
     
 
     if isinstance(COE,array):
-        r_PQW = p/(1+ecc*op.cos(TA)) * array([op.cos(TA), op.sin(TA), 0])
-        v_PQW = array([-op.sqrt(mu/p) * op.sin(TA), (op.sqrt(mu/p)*(ecc + op.cos(TA))), 0])
+        r_PQW = h**2/(mu*(1+ecc*op.cos(TA))) * array([op.cos(TA), op.sin(TA), 0])
+        v_PQW = mu/h * array([-op.sin(TA), ecc+op.cos(TA), 0])
 
         ROT = ROT3(om) @ ROT1(inc) @ ROT3(RAAN)
-        
+        ROT = ROT.transpose()
         r_ijk = ROT @ r_PQW
         v_ijk = ROT @ v_PQW
 
+    elif isinstance(COE[0], float):
+        r_PQW = h**2/(mu*(1+ecc*op.cos(TA))) * np.array([op.cos(TA), op.sin(TA), 0])
+        v_PQW = mu/h * np.array([-op.sin(TA), ecc+op.cos(TA), 0])
+
+        ROT = ROT3(om) @ ROT1(inc) @ ROT3(RAAN)
+        ROT = ROT.T
+
+        r_ijk = ROT @ r_PQW
+        v_ijk = ROT @ v_PQW
+    
     return r_ijk, v_ijk
 
 def ROT1(x):
@@ -448,3 +460,4 @@ def ROT3(x):
     ROT3[2,2] = 1
     
     return ROT3
+
