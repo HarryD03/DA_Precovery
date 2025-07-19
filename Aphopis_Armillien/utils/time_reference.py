@@ -391,7 +391,8 @@ def COE2CC(COE, mu):
     COE: Classical Orbital Elements (COE) in the form of a 6x1 array [semi-major axis, eccentricity, inclination, right ascension of the ascending node, argument of perigee, true anomaly]
     mu: Gravitational parameter of the central body
     :return: 
-    Position vector [i,j,k] and velocity vector [i,j,k] around the center of mass of the body defined by mu
+    Position vector [i,j,k]
+    velocity vector [i,j,k] around the center of mass of the body defined by mu
     """
 
     a, ecc, inc, RAAN, om, TA = COE

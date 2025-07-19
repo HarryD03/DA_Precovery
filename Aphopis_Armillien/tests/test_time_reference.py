@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 from Aphopis_Armillien.utils.time_reference import J0, zeroTo360, LST, equatorial_to_eclipitcJ2000, create_da_los_vectors
 
+
 def test_J0():
     """
     Tests the provided J0(y, m, d) routine.
@@ -211,3 +212,86 @@ def test_create_da_los_vectors():
     with pytest.raises(AssertionError):
         # Mismatched RA/DEC lengths should trip the function’s asserts
         create_da_los_vectors(np.array([[0, 1]]), np.array([[0]]))
+
+from Aphopis_Armillien.utils.time_reference import CC2COE, CC2MEE, MEE2CC, COE2CC, ROT1, ROT3
+
+def test_ROT1():
+    # Test based on Curtis Ex 4.5
+    RAAN = np.deg2rad(40)
+    argp = np.deg2rad(60)
+    inc = np.deg2rad(30)
+
+    ROT  = ROT3(argp) @ ROT1(inc) @ ROT3(RAAN)
+    
+    answer = np.array((3,3))
+    answer(0,0) = -0.099068
+    answer(1,0) = 0.89593
+    answer(2,0) = 0.43301
+    answer(0,1) =  -0.94175
+    answer(1,1) = -0.22496
+    answer(1,2) = 0.25
+    answer(0,2) = 0.32139
+    answer(1,2) = -0.38302
+    answer(2,2) = 0.86603
+
+    assert np.allclose(ROT, answer, rtol=1e-6), (
+        f"ROT1 mismatch: expected {answer}, got {ROT}"
+    )
+
+
+
+def test_CC2COE():
+    #Test from Cutis ex 4.3
+    r = np.array([-6045, -3490, 2500])
+    v = np.array([-3.457, 6.618, 2.533])
+    rv = np.hstack((r, v))
+    COE = CC2COE(rv, mu=398600.4418)
+
+    assert np.allclose(COE, np.array([8788, 0.1712, np.deg2rad(153.2), np.deg2rad(255.3), np.deg2rad(20.07), np.deg2rad(28.45)]), rtol=1e-6), (
+        f"CC2COE mismatch: expected COE values, got {COE}"
+    )
+
+def test_COE2CC():
+    # Test from Curtis Ex 4.4
+
+    COE = np.array([-53592.1178, 1.4, np.deg2rad(30), np.deg2rad(40), np.deg2rad(60), np.deg2rad(30)])
+    r, v = COE2CC(COE, mu=398600.4418)
+
+    r_expected = np.array([-4040, 4815, 3629])
+    v_expected = np.array([-10.39, -4.772, 1.744])
+    
+    assert np.allclose(r, r_expected, rtol=1e-6), (
+        f"Position vector mismatch: expected {r_expected}, got {r}"
+    )
+    assert np.allclose(v, v_expected, rtol=1e-6), (
+        f"Velocity vector mismatch: expected {v_expected}, got {v}"
+    )
+
+def test_CC2MEE():
+    # Test from https://ai-solutions.com/_help_Files/orbit_element_types.htm#achr_modifiedequinoctial 
+    r = np.array([-3410.673, 5950.957, -1788.627])
+    v = np.array([1.893, -1.071, -7.176])
+
+    MEE = CC2MEE(r, v, mu=398600.4418)
+    MEE_expected = np.array([7070.766, 0.00180, -0.00170, 0.610, -0.980, 136.64])
+
+    assert np.allclose(MEE, MEE_expected, rtol=1e-6), (
+        f"CC2MEE mismatch: expected {MEE_expected}, got {MEE}"
+    )
+
+def test_MEE2CC():
+    # Test from https://ai-solutions.com/_help_Files/orbit_element_types.htm#achr_modifiedequinoctial 
+    MEE = np.array([7070.766, 0.00180, -0.00170, 0.610, -0.980, 136.64])
+    r, v = MEE2CC(MEE, mu=398600.4418)
+
+    r_expected = np.array([-3410.673, 5950.957, -1788.627])
+    v_expected = np.array([1.893, -1.071, -7.176])
+
+    assert np.allclose(r, r_expected, rtol=1e-6), (
+        f"Position vector mismatch: expected {r_expected}, got {r}"
+    )
+    assert np.allclose(v, v_expected, rtol=1e-6), (
+        f"Velocity vector mismatch: expected {v_expected}, got {v}"
+    )
+# Note: The above tests assume the mu value is the gravitational parameter for Earth.
+
