@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
 from Aphopis_Armillien.utils.time_reference import J0, zeroTo360, LST, equatorial_to_eclipitcJ2000, create_da_los_vectors
+from Aphopis_Armillien.utils.time_reference import CC2COE, CC2MEE, MEE2CC, COE2CC, ROT1, ROT3
 
 
 def test_J0():
@@ -213,7 +214,6 @@ def test_create_da_los_vectors():
         # Mismatched RA/DEC lengths should trip the function’s asserts
         create_da_los_vectors(np.array([[0, 1]]), np.array([[0]]))
 
-from Aphopis_Armillien.utils.time_reference import CC2COE, CC2MEE, MEE2CC, COE2CC, ROT1, ROT3
 
 def test_ROT1():
     # Test based on Curtis Ex 4.5
