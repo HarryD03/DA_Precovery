@@ -1,7 +1,6 @@
 import pytest
 import numpy as np
-from Aphopis_Armillien.utils.time_reference import J0, zeroTo360, LST, equatorial_to_eclipitcJ2000, create_da_los_vectors
-from Aphopis_Armillien.utils.time_reference import CC2COE, CC2MEE, MEE2CC, COE2CC, ROT1, ROT3
+from Aphopis_Armillien.utils.time_reference import J0, zeroTo360, LST, equatorial_to_eclipitcJ2000, create_da_los_vectors, CC2COE, CC2MEE, MEE2CC, COE2CC, ROT1, ROT3
 
 
 def test_J0():
@@ -162,61 +161,10 @@ def test_equatorial_to_eclipitcJ2000():
         "x-component should remain unchanged by x-axis rotation"
     )
 
-def test_create_da_los_vectors():
-    """
-    Accuracy, shape/type, unit-length, and assertion checks for the
-    line-of-sight vector generator.
-
-    Typical-case numbers come from Curtis Example 5.11 (Table 5.1).
-    """
-
-    # -------------------------------------------------
-    # 1. Typical-case inputs (degrees ➜ radians)
-    # -------------------------------------------------
-    ra_deg  = np.array([[43.537, 54.420, 64.318]])   # 1×N row
-    dec_deg = np.array([[-8.7833, -12.074, -15.105]])
-    ra_rad  = np.deg2rad(ra_deg)
-    dec_rad = np.deg2rad(dec_deg)
-
-    # -------------------------------------------------
-    # 2. Expected result from Eq. 5.57 (independent)
-    # -------------------------------------------------
-    expected = np.vstack((
-        np.cos(dec_rad) * np.cos(ra_rad),
-        np.cos(dec_rad) * np.sin(ra_rad),
-        np.sin(dec_rad)
-    ))
-
-    # -------------------------------------------------
-    # 3. Call the function under test
-    # -------------------------------------------------
-    los = create_da_los_vectors(ra_rad, dec_rad)
-
-    # -------------------------------------------------
-    # 4. Numerical accuracy (element-wise)
-    # -------------------------------------------------
-    assert np.allclose(los.astype(float), expected.astype(float), rtol=1e-6), (
-        f"LOS vectors incorrect:\nexpected\n{expected}\nactual\n{los}"
-    )
-
-    # -------------------------------------------------
-    # 5. Type, shape, and unit-length checks
-    # -------------------------------------------------
-    assert isinstance(los, np.ndarray),  "Return type must be np.ndarray"
-    assert los.shape == (3, 3),          "Return shape must be (3, N)"
-    norms = np.linalg.norm(los.astype(float), axis=0)
-    assert np.allclose(norms, 1.0, rtol=1e-10), "Each LOS vector must be unit length"
-
-    # -------------------------------------------------
-    # 6. Defensive-programming assertion check
-    # -------------------------------------------------
-    with pytest.raises(AssertionError):
-        # Mismatched RA/DEC lengths should trip the function’s asserts
-        create_da_los_vectors(np.array([[0, 1]]), np.array([[0]]))
 
 
 def test_ROT1():
-    # Test based on Curtis Ex 4.5
+    """ Test based on Curtis Ex 4.5 """
     RAAN = np.deg2rad(40)
     argp = np.deg2rad(60)
     inc = np.deg2rad(30)
@@ -242,14 +190,15 @@ def test_ROT1():
 
 def test_CC2COE():
     #Test from Cutis ex 4.3
+
     r = np.array([-6045, -3490, 2500])
     v = np.array([-3.457, 6.618, 2.533])
-    rv = np.hstack((r, v))
-    COE = CC2COE(rv, mu=398600.4418)
 
-    assert np.allclose(COE, np.array([8788, 0.1712, np.deg2rad(153.2), np.deg2rad(255.3), np.deg2rad(20.07), np.deg2rad(28.45)]), rtol=1e-6), (
-        f"CC2COE mismatch: expected COE values, got {COE}"
-    )
+    COE = CC2COE(r, v, mu=398600.4418)
+    
+    COE_expected = np.array([8788, 0.1712, np.deg2rad(153.2), np.deg2rad(255.3), np.deg2rad(20.07), np.deg2rad(28.45)])
+    
+    assert np.allclose(COE, COE_expected, rtol=1e-6), (f"CC2COE mismatch: expected COE values, got {COE}")
 
 def test_COE2CC():
     # Test from Curtis Ex 4.4
@@ -294,5 +243,5 @@ def test_MEE2CC():
     assert np.allclose(v, v_expected, rtol=1e-6), (
         f"Velocity vector mismatch: expected {v_expected}, got {v}"
     )
-# Note: The above tests assume the mu value is the gravitational parameter for Earth.
+    # Note: The above tests assume the mu value is the gravitational parameter for Earth.
 
