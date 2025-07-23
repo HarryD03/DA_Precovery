@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from Aphopis_Armillien.utils.time_reference import J0, zeroTo360, LST, equatorial_to_eclipitcJ2000, create_da_los_vectors, CC2COE, CC2MEE, MEE2CC, COE2CC, ROT1, ROT3
+from Aphopis_Armillien.utils.time_reference import J0, zeroTo360, LST, equatorial_to_eclipitcJ2000, create_da_los_vectors, CC2COE, CC2MEE, MEE2CC, COE2CC, ROT1, ROT3, CC2obs, obs2CC
 
 
 def test_J0():
@@ -288,3 +288,48 @@ def test_MEE2CC():
     )
     # Note: The above tests assume the mu value is the gravitational parameter for Earth.
 
+def test_CC2obs():
+    #Test 1: Test position part validate via Curtis Ex 4.1
+    r = np.array([-5386.0, -1784.0, 3691])
+    v = np.array([0,0,0])
+    X = np.concatenate((r,v))
+
+    obs = CC2obs(X)
+    RA_DEC_RANGE = obs[:3]
+    RA_DEC_RANGE_expected = np.array([np.deg2rad(198.4), np.deg2rad(33.12), 6529.218407])
+    assert(np.allclose(RA_DEC_RANGE,RA_DEC_RANGE_expected, rtol = 1e-6),
+           (f"Mismatch: Expected\n{RA_DEC_RANGE_expected}\n CC2Obs:\n{RA_DEC_RANGE}\n"))
+    
+    #Test 2: Test Full Vector Via Cartesian 2 Spherical Conversion. Via Cutis ex 4.1. 
+    # Velocities are hand calculated from r. Assume circular orbit, earth orbiting
+    v = np.array([2.022580402, -6.106302043, 4.18461954]) # The velocity unit vector is perpindicular to the position unit vector is the x-y plane.
+    range_rate_expected = np.dot(r,v) / np.linalg.norm(r)
+    X = np.concatenate((r, v))
+
+    obs = CC2obs(X)
+    obs_expected = np.array([np.deg2rad(198.4), np.deg2rad(33.12), 6529.218407, 1.19298530718, 5.182250044e-4, range_rate_expected])
+    assert(np.allclose(obs, obs_expected, rtol=1e-6),
+           (f"Mismatch: Expected\n{obs_expected}\n CC2Obs:\n{obs}\n"))
+    
+def test_obs2CC():
+    #Test 1: Test position part validate via Curtis Ex 4.1
+    obs = np.array([np.deg2rad(198.4), np.deg2rad(33.12), 6529.218407, 0, 0, 0])
+    X = obs2CC(obs)
+    r_expected = np.array([-5386.0, -1784.0, 3691])
+    v_expected = np.array([0, 0, 0])
+    
+    assert(np.allclose(X[:3], r_expected, rtol=1e-6),
+           (f"Mismatch: Expected\n{r_expected}\n Obs2CC:\n{X[:3]}\n"))
+    assert(np.allclose(X[3:], v_expected, rtol=1e-6),
+           (f"Mismatch: Expected\n{v_expected}\n Obs2CC:\n{X[3:]}\n"))  
+
+    #Test 2: Test Full Vector Via Cartesian 2 Spherical Conversion. Via Cutis ex 4.1.
+    obs = np.array([np.deg2rad(198.4), np.deg2rad(33.12), 6529.218407, 1.19298530718, 5.182250044e-4, 2.2818909260])
+    X = obs2CC(obs)
+    r_expected = np.array([-5386.0, -1784.0, 3691])
+    v_expected = np.array([2.022580402, -6.106302043, 4.18461954])  # The velocity unit vector is perpindicular to the position unit vector is the x-y plane.
+    assert(np.allclose(X[:3], r_expected, rtol=1e-6),
+           (f"Mismatch: Expected\n{r_expected}\n Obs2CC:\n{X[:3]}\n"))
+    assert(np.allclose(X[3:], v_expected, rtol=1e-6),
+           (f"Mismatch: Expected\n{v_expected}\n Obs2CC:\n{X[3:]}\n"))
+    

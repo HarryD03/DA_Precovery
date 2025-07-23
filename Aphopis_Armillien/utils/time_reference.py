@@ -461,3 +461,113 @@ def ROT3(x):
     
     return ROT3
 
+def CC2obs(X: Union[array, NDArray]) -> Union[array, NDArray]:
+    """
+    Function for converting Right Ascension, Declination and Range coordinates to Cartesian coordinates.
+    :param X: Cartesian coordinates in the form of position vector [i,j,k] and velocity vector [i,j,k]
+    :param mu: Gravitational parameter of the central body
+    :return: 
+    Position vector [i,j,k] around the center of mass of the body
+
+    Assume observations are in Equatorial topocentric Reference frame
+    """
+    r = X[:3]  # Position vector
+    v = X[3:]  # Velocity vector
+
+    if isinstance(X[0], Union[float, int]):
+        r_norm = np.linalg.norm(r)
+
+    elif isinstance(X, array):
+        r_norm = r.vnorm()
+
+    else: 
+        raise TypeError("Input X must be either a numpy array or a DA array") 
+
+    DEC = op.sin(r[2]/r_norm)                   #Declination
+    RA = op.cos(r[0]/r_norm * 1/op.cos(DEC))    #Right Ascension
+
+    #Ensure correct Quadrant 
+    if isinstance(X[0], Union[float, int]):
+        RA = RA % np.pi
+
+    elif isinstance(X, array):
+        RA = RA.cons() % np.pi
+    
+    Range = r_norm                              #range 
+
+    DEC_rate = ( (r[0]**2 + r[1]**2)*v[2] - r[2]*(r[0]*v[0] + r[1]*v[1] ) / ( Range**2 * op.sqrt(r[0]**2 + r[1]**2)) ) 
+    RA_rate = (r[0]*v[1] - r[1]*v[0] ) / (r[0] + r[1])
+
+    if isinstance(X, array):
+        if abs(RA_rate.cons()) < np.pi:
+             RA_rate = RA_rate  % np.pi
+    elif isinstance(X[0], Union[int,float]):
+        if abs(RA_rate) < np.pi:
+            RA_rate = RA_rate  % np.pi
+    else:
+        raise TypeError("RA_rate has failed to find correct quadrant")
+
+    if isinstance(X, array):
+        Range_rate = r.dot(v) / Range
+    elif isinstance(X[0], Union[int,float]):
+        Range_rate = np.dot(r, v) / Range
+    obs = np.zeros_like(X, dtype=object)
+    obs[0] = RA
+    obs[1] = DEC
+    obs[2] = Range
+    obs[3] = RA_rate
+    obs[4] = DEC_rate
+    obs[5] = Range_rate
+
+    return obs
+
+def obs2CC(obs: Union[array, NDArray]) -> Union[array, NDArray]:
+    """
+        Function for converting Observation coordinates to Cartesian coordinates.
+    :param obs: Observation coordinates in the form of [RA, DEC, Range, RA_rate, DEC_rate, Range_rate]
+    :param mu: Gravitational parameter of the central body
+    :return: 
+        Position vector [i,j,k] and velocity vector [i,j,k] around the center of mass of the body defined by mu
+    """
+
+    RA, DEC, Range, RA_rate, DEC_rate, Range_rate = obs
+
+    X = np.zeros_like(obs, dtype=object)
+
+    u_r = [op.cos(DEC)*op.cos(RA), op.cos(DEC) * op.sin(RA), op.sin(DEC)]
+    phi_v = [ [op.cos(DEC),            -Range*op.cos(DEC)*op.sin(RA), -Range*op.sin(DEC)*op.cos(RA)], 
+              [op.cos(DEC)*op.sin(RA), Range*op.cos(DEC)*op.cos(RA) , -Range*op.sin(RA)*op.sin(RA) ],
+              [op.sin(DEC)           , 0                            , Range*op.cos(DEC)            ]
+            ]
+    rates = [Range_rate, RA_rate, DEC_rate]
+
+    #Wrapper Functions
+    if isinstance(obs, array):
+        u_r = array(u_r)
+        phi_v = np.array(phi_v)
+        rates = array(rates)
+    elif isinstance(obs[0], Union[float,int]):
+        u_r = np.array(u_r)
+        phi_v = np.array(phi_v)
+        rates = np.array(rates)
+    else:
+        raise TypeError("Input obs must be either a numpy array or a DA array")
+
+    #Calculations per Curtis
+    r = Range * u_r
+    v = phi_v @ rates
+
+    # Concatenate position and velocity vectors into one vector
+    if isinstance(obs, array):
+        X = r.concat(v)  # Concatenate position and velocity vectors into one vector'
+    elif isinstance(obs[0], Union[float,int]):
+        X = np.concatenate((r, v))
+    else:
+        raise TypeError("Input obs must be either a numpy array or a DA array")
+    
+    return X
+
+
+
+
+
