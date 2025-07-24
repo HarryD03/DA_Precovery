@@ -5,6 +5,10 @@ import daceypy.op as op
 from numpy.typing import NDArray
 import poliastro as pl
 from astropy.time import Time
+from astropy import units as u
+from astropy.time import Time
+from poliastro.bodies import Sun, Earth
+from poliastro.ephem import Ephem                       # high‑precision JPL SPK :contentReference[oaicite:0]{index=0}
 
 
 def J0(y,m,d) -> float:
@@ -567,7 +571,49 @@ def obs2CC(obs: Union[array, NDArray]) -> Union[array, NDArray]:
     
     return X
 
+def ECI2HelioJ2000(X_ECI, t):
+    """   
+      Function to convert ECI coordinates to Helio J2000 coordinates.
+      DA compatible version.
+      :param X: ECI cartiesian vector
+      :param t: epoch of that vector
+      :param r_E: Earth-sun vector in same equatorial frame
+      :return:
+        r_helio: Position vector in Helio J2000 coordinates
+        v_helio: Velocity vector in Helio J2000 coordinates
+    """
+    earth_ephem = Ephem.from_body(Earth, t.tdb)          # 1‑epoch ephemeris :contentReference[oaicite:1]{index=1}
+    r_Esun, v_Esun = earth_ephem.rv(Sun)                 # position & velocity w.r.t. Sun
 
+    r_hel_eq = r_Esun.to(u.km).value + X_ECI[:3]
+    v_hel_eq = v_Esun.to(u.km).value + X_ECI[3:]
+   
+    offset = np.deg2rad(23.43929111)    # Offset for J2000 ecliptic coordinates
+    r_hel_ec = ROT1(offset) @ r_hel_eq  # Rotate to ecliptic frame
+    v_hel_ec = ROT1(offset) @ v_hel_eq  # Rotate velocity vector to ecliptic frame
+    if isinstance(X_ECI[0], Union[float,int]):
+        X_hel_ec = np.concatenate((r_hel_ec, v_hel_ec))  # Concatenate position and velocity vectors
+    elif isinstance(X_ECI, array):
+        X_hel_ec = r_hel_ec.concat(v_hel_ec)
+    else:
+        assert TypeError("ECI2HelioJ2000 Failed: Input X_ECI must be either a numpy array or a DA array")
+    return X_hel_ec
 
+def Helio2ECIJ200(X_hel_ec,t):
+        
+    offset = np.deg2rad(23.43929111)    # Offset for J2000 ecliptic coordinates
 
+    r_hel_eq = ROT1(-offset) @ X_hel_ec[:3]  # Rotate to equatorial frame
+    v_hel_eq = ROT1(-offset) @ X_hel_ec[3:] 
 
+    r_Esun, v_Esun = Ephem.from_body(Earth, t).rv(Sun)
+    r_ECI = r_hel_eq - r_Esun.to(u.km).value
+    v_ECI = v_hel_eq - v_Esun.to(u.km).value
+
+    if isinstance(X_hel_ec[0], Union[float,int]):
+        X_ECI = np.concatenate((r_ECI, v_ECI))
+    elif isinstance(X_hel_ec, array):
+        X_ECI = r_ECI.concat(v_ECI)
+    else:
+        assert TypeError("Helio2ECIJ2000 Failed: Input X_hel_ec must be either a numpy array or a DA array")
+    return X_ECI
