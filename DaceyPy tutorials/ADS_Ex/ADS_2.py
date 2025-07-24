@@ -457,6 +457,8 @@ def main():
             np.save(f, XF, allow_pickle = True)
 
     # compute only highest order propagation and lower orders evaluated by truncating poly map
+
+    #PROPAGATION WITHOUT DA
     try:
         # load the propagated domain if integration already exists
         with (thisfolder / 'order_1.npy').open('rb') as f:
@@ -493,7 +495,7 @@ def main():
 
         DA.pushTO(1)                    #Push to first order 
         XF1 = np.zeros((4,Ts,perimeter_norm.shape[0]))
-        x_sub = array.identity(2)       #1+DA(1), 1 + DA(2)
+        x_sub = array.identity(2)       #DA(1), DA(2)
         for i in range(Ts):                                                 #for each timestep
             xf = XFN[:,i].copy()                                            #copy propagated state STILL IN DA
             xf_temp = xf.eval(x_sub)                                        #Only a formality; the code is shifted by a constant value for subdomain splitting. Here only 1 domian so no splitting required, therefore no nomial point shifting.
