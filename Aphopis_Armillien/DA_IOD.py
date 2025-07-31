@@ -557,8 +557,9 @@ for i in range(len(tgrid)):
 #Convert the CC ECI to RA,DEC,Range 
 X_prop_obs = np.zeros_like(X_prop_MEE,dtype=object)
 X_domain_obs = np.zeros_like(X_domain_MEE,dtype=object)
-for i in range(len(X_domain_obs))
-    X_prop_obs = time_reference()
+for i in range(len(X_domain_obs)):
+    X_prop_obs = time_reference.CC2obs(X_prop_CC_ECI[i])
+    X_domain_obs = time_reference.CC2obs(X_domain_CC_ECI[i])
 
 #Eval the DA obserations with the 3 sigma error value. 
 
