@@ -248,6 +248,5 @@ def base_propagationPW(x0, t0, tf, dynamics):
         Point-wise Propagation of Orbital Set
     """
     xf = RK78(x0, t0, tf, dynamics)
-
-    # This function is not implemented yet.
+    
     return xf

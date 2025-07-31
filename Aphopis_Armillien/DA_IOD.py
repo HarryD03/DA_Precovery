@@ -11,7 +11,6 @@ from numpy.typing import NDArray
 from matplotlib import pyplot as plt
 from utils.lambert_izzo import lambert_izzo
 from utils import time_reference
-from utils import iod
 
 import poliastro as pl
 import astropy.time as at
@@ -20,14 +19,13 @@ import astropy.coordinates as acoords
 import astropy.units as u
 from datetime import datetime
 from time import perf_counter
+from utils import dynamics, propagation, time_reference, iod
 
 # TODO 
-#   0. Finish the DAIOD Algorithm so that the second lambert arc section is calculated correctly done
-#   1. Implement a Method to convert between RA and DEC errors to Helocentric coordinate errors. RA_DEC_2_Helocentric()
-#   1b. Create a Carteisan Helocentric -> Earth RA_DEC_Range function (to assess the range,range rate phase space)
-#   2. Ensure 3 sigma scaling is implemented correctly. done
-#   3. ADS for the inital Domain. done
-#   4. ADS for the propagated Domain (done). done
+# 1. Integrate the ADS propagationn with the DAIOD algorithm.
+# 2. Integrate the ADS propagated state into observables i.e. State Vectors -> Observables
+# 3. Create Standalone DAIOD algorithm that can be used for Initial Orbit Determination (IOD) without ADS.
+
 
 """
     This file contains the implementation of the DA_IOD algorithm without Automatic Domain splitting. 
@@ -486,9 +484,9 @@ X_0, _ = DAIOD(RA_DA, DEC_DA, range_mag, r_obs_heliocentric, t_obs_s, mu)
 #Initial domain is obtained through converting rv (DA=angles) -> range and range rate 
 domain0 = RA.concat(DEC)
 
-r_tol = 1                   # 1 meter position tolerance
-v_tol = 1e-3                # 1mm/s velocity tolerance
-tol_vec = np.array([r_tol] * 3 + [v_tol] * 3)
+r_tol = np.array([1,1,1])                   # 1 meter position tolerance
+v_tol = np.array([1e-3,1e-3,1e-3])                # 1mm/s velocity tolerance
+tol_vec = np.concatenate(r_tol,v_tol)
 Nmax = 10
 init_domain = ADS(domain0, [])          #This will be the Angle initialisations variables
 
@@ -502,85 +500,73 @@ final_lists = final_lists.append(final_list)
 
 #Final lists should contain the split subdomains and the initial domain. 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # ------------------------------------------------------------------------------
 # ADS Propagation
 # ------------------------------------------------------------------------------
  
-# Step 1: Define uncertanity perimeter of the domain
+#Convert CC Heliocentric to MEE Heliocentric 
+X_0_MEE = time_reference.CC2MEE(X_0[:3], X_0[3:], mu)
 
-TF = 50.                 #Final time
-T0 = 0.                  #Initial time
-Ns = 33                  #Number of gridpoints        
-Ts = 51                  #Number of timesteps
+#Prep for Propagation
+domain0 = X_0_MEE
+r_tol = np.array([1,1,1])
+v_tol = np.array([1e-3,1e-3,1e-3])
+tol = np.concatenate(r_tol,v_tol)
+Nmax = 10
+tgrid = np.linspace(t0, tf, N)              #t0 is epoch, tf is final time.
 
-# step 1a: convert the RA and DEC uncertanity to a Helocentric coordinate for the uncertanity 'domian'.
-
-xb = RA_DEC_2_Helocentric(three_sigmasRA, three_sigmasDA)
-yb = RA_DEC_2_Helocentric(three_sigmasRA, three_sigmasDA)
-
-# step 1b: generate the grid perimeter of the initial domain 
-
-tgrid = np.linspace(T0, TF, Ts)     #Generate time grid
-xgrid = np.linspace(-1, 1, Ns)      #Generate x grid [-1, 1] is a must
-ygrid = np.linspace(-1, 1, Ns)      #Generate y grid [-1, 1] is a must
-
-lb = np.ones((Ns,2))                #Left boundary of uncertanity set
-lb[:, 0] = lb[:,0]*(-xb)
-lb[:, 1] = yb*ygrid
-
-rb = np.ones((Ns,2))                #Right boundary of uncertanity set
-rb[:, 0] = rb[:,0]*(xb)
-rb[:, 1] = yb*ygrid
-
-bb = np.ones((Ns,2))                #Bottom boundary of uncertanity set
-bb[:, 0] = xgrid
-bb[:, 1] = bb[:,1]*(-yb)
-
-tb = np.ones((Ns,2))                #Top boundary of uncertanity set
-tb[:, 0] = xgrid
-tb[:, 1] = tb[:,1]*(yb)
-
-# Define the perimeter of the entire initial domain
-perimeter = np.concatenate((tb, rb, bb, lb))
-perimeter_norm = np.concatenate((tb, rb, bb, lb))
-
-perimeter_norm[:, 0] = perimeter[:,0]/xb
-perimeter_norm[:, 1] = perimeter[:,1]/yb
-
-
-init_domain = ADS(X_0, [])
-toll = 1e-4
-Nmax = 100
-
+init_domain = ADS(domain0, [])
 init_list = [init_domain]
 final_lists = []
-final_list = init_list.copy()
-final_lists.append(final_list) # add also initial domains
+final_list = X_0_MEE.copy
+final_lists.append(final_list)
 
+#ADS Domain Splitting
 start_advanced = time.time()
-for i in range(Ts - 1):
+for i in range(len(tgrid) - 1):
     final_list = ADS.eval(
-        final_list, toll, Nmax,
-        lambda domain: advanced_propagation(domain, t0=tgrid[i], tf=tgrid[i+1]))
+        final_list, tol, Nmax, 
+        lambda domain: 
+        propagation.advanced_propagationADS(domain, tgrid[i], tgrid[i+1], dynamics.TBP_MEE_DA(domain, mu, 0, tgrid[i]))
+        )
     final_lists.append(final_list)
-
     print('time ', tgrid[i+1], 'reached!')
 
 print('execution time advanced ADS: ', time.time() - start_advanced)
+
+#Post Progation Conversions (MEE -> CC Heliocentric)
+
+X_prop_MEE = final_lists.manifold   #Extract propagation manifold DA
+X_domain_MEE = final_lists.box      #Extract subdomain splits with the associated manifold
+
+X_prop_CC = np.zeros_like(X_prop_MEE, dtype=object)
+X_domain_CC = np.zeros_like(X_domain_MEE, dtype=object)
+for i in range(len(X_prop_MEE)):
+    X_prop_CC[i] = time_reference.MEE2CC(X_prop_MEE, mu)
+    X_domain_CC[i] = time_reference.MEE2CC(X_domain_MEE, mu)
+
+#Conert the CC Heliocentric to CC ECI
+
+X_prop_CC_ECI = np.zeros_like(X_prop_MEE, dtype=object)
+X_domain_CC_ECI = np.zeros_like(X_domain_MEE, dtype=object)
+assert len(tgrid) == len(X_prop_CC), "Number of Timesteps is NOT equal to number of states"
+for i in range(len(tgrid)): 
+    X_prop_CC_ECI[i] = time_reference.Helio2ECIJ200(X_prop_CC, tgrid[i])
+    X_domain_CC_ECI[i] = time_reference.Helio2ECIJ200(X_domain_CC, tgrid[i])
+
+#Convert the CC ECI to RA,DEC,Range 
+X_prop_obs = np.zeros_like(X_prop_MEE,dtype=object)
+X_domain_obs = np.zeros_like(X_domain_MEE,dtype=object)
+for i in range(len(X_domain_obs))
+    X_prop_obs = time_reference()
+
+#Eval the DA obserations with the 3 sigma error value. 
+
+
+
+ 
+ 
+
 
 
 
