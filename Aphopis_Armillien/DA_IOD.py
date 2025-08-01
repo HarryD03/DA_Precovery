@@ -561,11 +561,85 @@ for i in range(len(X_domain_obs)):
     X_prop_obs = time_reference.CC2obs(X_prop_CC_ECI[i])
     X_domain_obs = time_reference.CC2obs(X_domain_CC_ECI[i])
 
-#Eval the DA obserations with the 3 sigma error value. 
-
-
-
+#Eval the DA obserations with the 3 sigma error value to obtain propagated orbit set and corresponding split domains.
+    # 1) Obtain Perimeter 'box' of the initial domain
+    # 2) Evalue the Taylor polynomial Map with the perimeter
  
+def gen_grid3D(threesigma_error,Ns):
+    """
+        Generate the boundary of the Orbital Set
+        
+        :param threesigma_error: The 3 sigma measurement precision
+        :param Ns: The number of steps for the xgrid,ygrid and zgrid. 
+    """
+    # Define grids for each axis
+    xgrid = np.linspace(-1, 1, Ns)
+    ygrid = np.linspace(-1, 1, Ns)
+    zgrid = np.linspace(-1, 1, Ns)
+
+    # Uncertainties in each direction
+    xb = threesigma_error
+    yb = threesigma_error
+    zb = threesigma_error  # example value for z uncertainty
+
+# Each face is a (Ns, Ns, 3) array, then reshape to (Ns*Ns, 3)
+# x = -xb face
+    face1 = np.stack((
+        np.full((Ns, Ns), -xb),         # x = -xb
+        yb * ygrid[None, :],            # y varies
+        zb * zgrid[:, None]             # z varies
+    ), axis=-1).reshape(-1, 3)
+
+    # x = +xb face
+    face2 = np.stack((
+        np.full((Ns, Ns), xb),          # x = +xb
+        yb * ygrid[None, :],
+        zb * zgrid[:, None]
+    ), axis=-1).reshape(-1, 3)
+
+    # y = -yb face
+    face3 = np.stack((
+        xb * xgrid[None, :],
+        np.full((Ns, Ns), -yb),         # y = -yb
+        zb * zgrid[:, None]
+    ), axis=-1).reshape(-1, 3)
+
+    # y = +yb face
+    face4 = np.stack((
+        xb * xgrid[None, :],
+        np.full((Ns, Ns), yb),          # y = +yb
+        zb * zgrid[:, None]
+    ), axis=-1).reshape(-1, 3)
+
+    # z = -zb face
+    face5 = np.stack((
+        xb * xgrid[:, None],
+        yb * ygrid[None, :],
+        np.full((Ns, Ns), -zb)          # z = -zb
+    ), axis=-1).reshape(-1, 3)
+
+    # z = +zb face
+    face6 = np.stack((
+        xb * xgrid[:, None],
+        yb * ygrid[None, :],
+        np.full((Ns, Ns), zb)           # z = +zb
+    ), axis=-1).reshape(-1, 3)
+
+    # Concatenate all faces to get the perimeter (surface) points
+    perimeter = np.concatenate((face1, face2, face3, face4, face5, face6), axis=0)
+    perimeter_norm = np.zeros_like(perimeter)
+    perimeter_norm[:, 0] = perimeter[:, 0] / xb
+    perimeter_norm[:, 1] = perimeter[:, 1] / yb
+    perimeter_norm[:, 2] = perimeter[:, 2] / zb
+
+    return perimeter_norm
+
+perimeter_norm = gen_grid3D(3*error, 50)
+
+#Evaluate Perimeter to obtain the Orbital Sets
+for i in range(len(tgrid)):
+    
+
  
 
 
