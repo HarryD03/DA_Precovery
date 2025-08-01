@@ -511,6 +511,7 @@ X_0_MEE = time_reference.CC2MEE(X_0[:3], X_0[3:], mu)
 domain0 = X_0_MEE
 r_tol = np.array([1,1,1])
 v_tol = np.array([1e-3,1e-3,1e-3])
+perturbations = np.array([0,0,0])
 tol = np.concatenate(r_tol,v_tol)
 Nmax = 10
 tgrid = np.linspace(t0, tf, N)              #t0 is epoch, tf is final time.
@@ -527,7 +528,7 @@ for i in range(len(tgrid) - 1):
     final_list = ADS.eval(
         final_list, tol, Nmax, 
         lambda domain: 
-        propagation.advanced_propagationADS(domain, tgrid[i], tgrid[i+1], dynamics.TBP_MEE_DA(domain, mu, 0, tgrid[i]))
+        propagation.advanced_propagationADS(domain, tgrid[i], tgrid[i+1], dynamics.TBP_MEE_DA(domain, mu, perturbations, tgrid[i]))
         )
     final_lists.append(final_list)
     print('time ', tgrid[i+1], 'reached!')
@@ -636,8 +637,7 @@ def gen_grid3D(threesigma_error,Ns):
 
 perimeter_norm = gen_grid3D(3*error, 50)
 
-#Evaluate Perimeter to obtain the Orbital Sets
-
+#Evaluate Perimeter to obtain the Orbital Sets at propagted times
 final_map_list = []
 final_domain_list = []
 for i in range(len(tgrid)):
@@ -652,6 +652,19 @@ for i in range(len(tgrid)):
     final_map_list.append(final_manifold)
     final_domain_list.append(final_domain)
 
+final_map_list = []
+final_domain_list = []
+
+for i in range(len(tgrid)):  # Loop over time steps
+    n_domains = len(X_prop_obs[tgrid[i]])
+    final_manifold = np.zeros((6, perimeter_norm.shape[0], n_domains))  # 6 for MEE state dimension
+    final_domain = np.zeros((6, perimeter_norm.shape[0], n_domains))
+    for j in range(n_domains):  # Loop over domains at this time step
+        for k in range(perimeter_norm.shape[0]):  # Loop over perimeter points
+            final_manifold[:, k, j] = X_prop_obs[i][j].eval(perimeter_norm[k, :])
+            final_domain[:, k, j] = X_domain_obs[i][j].eval(perimeter_norm[k, :])
+    final_map_list.append(final_manifold)
+    final_domain_list.append(final_domain)
 
 
 
