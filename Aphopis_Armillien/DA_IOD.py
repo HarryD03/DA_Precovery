@@ -637,8 +637,24 @@ def gen_grid3D(threesigma_error,Ns):
 perimeter_norm = gen_grid3D(3*error, 50)
 
 #Evaluate Perimeter to obtain the Orbital Sets
+
+final_map_list = []
+final_domain_list = []
 for i in range(len(tgrid)):
-    
+    # 4: state dimension, perimeter_norm.shape[0]: number of perimeter points, len(final_lists[time_analysis[i]]): number of domains
+    final_manifold = np.zeros((4, perimeter_norm.shape[0], len(final_lists[tgrid[i]])))
+    final_domain = np.zeros((4, perimeter_norm.shape[0], len(final_lists[tgrid[i]])))
+    for j in range(len(final_lists[tgrid[i]])):
+        for k in range(perimeter_norm.shape[0]):
+            # perimeter_norm[k, :] is now a 3D vector (for 3D DA maps)
+            final_manifold[:, k, j] = final_lists[tgrid[i]][j].manifold.eval(perimeter_norm[k, :])
+            final_domain[:, k, j] = final_lists[tgrid[i]][j].box.eval(perimeter_norm[k, :])
+    final_map_list.append(final_manifold)
+    final_domain_list.append(final_domain)
+
+
+
+
 
  
 
