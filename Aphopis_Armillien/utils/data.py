@@ -144,7 +144,7 @@ def obs_extractN(NEA: pd.DataFrame, N_lower: int, N_upper: int) -> NDArray:
 
 def obs_extractDT(NEA: pd.DataFrame, start_index: int, DT: float, include_match: bool = False, tol: float = 1e-9, day_column: str = "DD.dddddddddd" ):
     """
-        Extract Observation based on first observation and the time after first observation
+        Extract Observation based on first observation and the time after first observation 'arc length'.
     """
 
     day = pd.to_numeric(NEA[day_column], errors="coerce")
