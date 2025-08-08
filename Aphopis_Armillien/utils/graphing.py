@@ -104,4 +104,8 @@ def gen_grid6D(threesigma_error, Ns):
     for d in range(6):
         perimeter_norm[:, d] = perimeter[:, d] / bounds[d]
     
-    return perimeter_norm
+    return perimeter_norm #(Number of perimeter points, 6) -> Each row is from -1,1. Each collum presents the compoent variation
+                        # i.e. if extracted one row, each element is the normalsed z position of a 6D perimeter, with values ranging from [-1,1].
+
+
+

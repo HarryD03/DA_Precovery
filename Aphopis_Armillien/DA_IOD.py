@@ -656,7 +656,7 @@ final_map_list = []
 final_domain_list = []
 
 for i in range(len(tgrid)):  # Loop over time steps
-    n_domains = len(X_prop_obs[tgrid[i]])
+    n_domains = len(X_domain_obs[tgrid[i]])
     final_manifold = np.zeros((6, perimeter_norm.shape[0], n_domains))  # 6 for MEE state dimension
     final_domain = np.zeros((6, perimeter_norm.shape[0], n_domains))
     for j in range(n_domains):  # Loop over domains at this time step

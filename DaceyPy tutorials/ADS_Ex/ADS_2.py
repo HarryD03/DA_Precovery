@@ -395,10 +395,10 @@ def main():
     XI[0] += 1.0              #x=1
     XI[3] += np.sqrt(1.5)     #ydot=sqrt(1.5)
 
-    TF = 50.                 #Final time
+    TF = 100.                 #Final time
     T0 = 0.                  #Initial time
     Ns = 33                  #Number of gridpoints        
-    Ts = 51                  #Number of timesteps
+    Ts = 101                  #Number of timesteps
 
     # part 1 of the example, assemble perimeter of ground truth domain:
     tgrid = np.linspace(T0, TF, Ts)     #Generate time grid
@@ -568,7 +568,7 @@ def main():
     toll=1e-4
     Nmax=100
 
-    time_analysis = [16, 33, 34, 35, 36, 37, 38, 39, 40]
+    time_analysis = [16, 33, 34, 35, 36, 37, 38, 39, 40, 50, 60, 70, 80, 90, 100]
 
     start_basic = time.time()
     for i in range(len(time_analysis)):
