@@ -618,7 +618,7 @@ def Helio2ECIJ200(X_hel_ec,t):
         assert TypeError("Helio2ECIJ2000 Failed: Input X_hel_ec must be either a numpy array or a DA array")
     return X_ECI
 
-####################################### Time Conversion ##############
+####################################### Time and Degree Conversion ##############
 def HH_MM_SS_to_Degrees(RA_array: Union[array, NDArray]) -> Union[array, NDArray]:
     """
         Converts an array of Right Ascension values in HH:MM:SS format to Degrees.
@@ -649,7 +649,7 @@ def dms_to_degrees(DEC_array):
     
     return sign * degree_dec
 
-def day_to_hhmmss(day_array):
+def timeday_to_hhmmss(day_array):
     """
         Convert the [Day.dddddd] -> [Day, Hours, Minutes, Seconds]
         :params day_array: Nx1 column array of decimal days
