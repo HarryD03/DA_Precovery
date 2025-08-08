@@ -112,15 +112,17 @@ def rwo_to_csv(input_path: str, output_path: str) -> None:
 def csv_to_pandas(input_path: str) -> pd.DataFrame:
     return pd.read_csv(input_path, skipinitialspace=True)
 
-def obs_extract(NEA: pd.DataFrame, N_lower: int, N_upper: int) -> NDArray:
+def obs_extractN(NEA: pd.DataFrame, N_lower: int, N_upper: int) -> NDArray:
     """
     Extracts the observation data from the NEA DataFrame THROUGH OBSERVATION INSTANCES.
     :param NEA: DataFrame containing NEA observation data.
     :param N: The number of observation instances to extract.
 
+    :return time: Time of observation (YYYY, Month, Day.dd)
     :return RA: Right Ascension of Observation (Hours, Minutes, Seconds)
     :return DEC: Declination of Observation (Degrees, Minutes, Hours)
-    :return time: Time of observation (YYYY, Month, Day.dd)
+    :return RA_sigma: Time of observation (YYYY, Month, Day.dd)
+    :return DEC_sigma: Time of observation (YYYY, Month, Day.dd)
     """
     rows = NEA.iloc[N_lower:N_upper]
     obs_time = rows[["YYYY", "MM", "DD.dddddddddd"]]
@@ -140,6 +142,64 @@ def obs_extract(NEA: pd.DataFrame, N_lower: int, N_upper: int) -> NDArray:
 
     return obs_time, RA, DEC, RA_sigma, DEC_sigma
 
+def obs_extractDT(NEA: pd.DataFrame, start_index: int, DT: float, include_match: bool = False, tol: float = 1e-9, day_column: str = "DD.dddddddddd" ):
+    """
+        Extract Observation based on first observation and the time after first observation
+    """
 
+    day = pd.to_numeric(NEA[day_column], errors="coerce")
 
+    start_val = float(day.loc[start_index])
+    target = start_val + DT
 
+    subset = day.loc[start_index:]                 # search forward from N_0
+    diffs = (subset - target).abs()
+    match_index = diffs.idxmin()
+    match_value = float(day.loc[match_index])
+
+    if abs(match_value - target) <= tol:
+        match_type = "exact"
+        print(f"EXACT match at index {match_index}: {match_value:.12f}")
+    else:
+        match_type = "rounded"
+        print(f"ROUNDED match at index {match_index}: {match_value:.12f} (Target Value: {target:.12f})")
+    
+    start_pos = NEA.index.get_loc(start_index)
+    match_pos = NEA.index.get_loc(match_index)
+    
+    if include_match:
+        lo, hi = sorted((start_pos, match_pos))
+        result = NEA.loc[lo:hi+1]
+    else:
+        if match_pos <= start_pos: 
+            result = NEA.iloc[start_pos:start_pos+1]    # Only return the first row
+        else:
+            result = NEA.iloc[start_pos:match_pos]      # up to match index but not including
+    
+
+    # Calculate forward differences: i+1 - i
+    day_values = pd.to_numeric(result[day_column], errors="coerce")
+    result["DD_diff"] = day_values.shift(-1) - day_values  # forward diff
+    result["DD_diff"] = result["DD_diff"].fillna(0)        # last row gets 0
+    result.iloc[0, result.columns.get_loc("DD_diff")] = 0  # ensure first row = 0
+
+    # Obtain the RA, DEC and Tim measurements in Numpy form 
+    obs_time = result[["YYYY", "MM", "DD.dddddddddd"]]
+    RA = result[["HH", "MM_2", "SS.sss"]]
+    DEC = result[["sDD","MM_3","SS.ss"]]
+
+    # Extract RA and DEC uncertainties
+    RA_sigma = result[["Accuracy_2"]]
+    DEC_sigma = result[["Accuracy_3"]]
+
+    # Time Difference
+    dt = result[["DD_diff"]]
+    # Conver to numpy arrays
+    obs_time = obs_time.to_numpy()
+    RA = RA.to_numpy()
+    DEC = DEC.to_numpy()
+    RA_sigma = RA_sigma.to_numpy()
+    DEC_sigma = DEC_sigma.to_numpy()
+
+    return obs_time, RA, DEC, RA_sigma, DEC_sigma, dt
+    
