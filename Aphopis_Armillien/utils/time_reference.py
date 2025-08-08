@@ -652,6 +652,8 @@ def dms_to_degrees(DEC_array):
 def day_to_hhmmss(day_array):
     """
         Convert the [Day.dddddd] -> [Day, Hours, Minutes, Seconds]
+        :params day_array: Nx1 column array of decimal days
+        :return [days, hours, minutes, seconds] array 
     """
     days = np.floor(day_array)
     frac_day = days - day_array
