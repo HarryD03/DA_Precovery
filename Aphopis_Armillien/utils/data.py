@@ -203,3 +203,51 @@ def obs_extractDT(NEA: pd.DataFrame, start_index: int, DT: float, include_match:
 
     return obs_time, RA, DEC, RA_sigma, DEC_sigma, dt
     
+def extract_N0(NEA: pd.DataFrame, t, year_col: str = "YYYY", month_col: str = "MM", day_col:str = "DD.dddddddddd", tol = 1e-9):
+    """
+        Extract the Index of variable based on [YYYY, MM, DD.ddddd]
+        If no extact match, it finds the closest one
+        :params NEA: Near Earth Asteroid Data Set
+        :params t: Time of interest in [YYYY, MM, DD.dddddd]
+    """
+
+    Y, M, D = t
+    
+    # Coerce to numeric (without mutating original dtypes)
+    year = pd.to_numeric(NEA[year_col], errors="coerce")
+    month = pd.to_numeric(NEA[month_col], errors="coerce")
+    day = pd.to_numeric(NEA[day_col], errors="coerce")
+
+    # 1) Try exact YYYY & MM subset
+    mask_exact_ym = (year == Y) & (month == M)
+
+    if mask_exact_ym.any():
+        sub = day[mask_exact_ym]
+        # Find closest day within same year & month
+        diffs = (sub - t).abs()
+        match_index = diffs.idxmin()
+        # Exact if within tolerance
+        match_type = "exact" if abs(day.loc[match_index] - D_t) <= tol else "closest"
+        
+        return match_index, match_type
+    
+    # 2) No exact YYYY/MM: pick closest by hierarchy: year → month → day
+    # Compute hierarchical distance: large weight for year, then month, then day
+    # (weights chosen to ensure hierarchy: year dominates, then month)
+
+    dist_year = (year - Y).abs()
+    # pick rows with minimal year distance
+    cand = dist_year == dist_year.min()
+    year_best_idx = year[cand].index
+
+    dist_month = (month.loc[year_best_idx] - M).abs()
+    cand2 = dist_month == dist_month.min()
+    ym_best_idx = dist_month.index[cand2]
+
+    # within those, choose closest day
+    dist_day = (day.loc[ym_best_idx] - D_t).abs()
+    match_index = dist_day.idxmin()
+
+    return match_index, "closest"
+
+
