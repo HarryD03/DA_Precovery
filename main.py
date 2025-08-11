@@ -17,6 +17,8 @@ import astropy.time as at
 import astropy.constants as ac
 import astropy.coordinates as acoords
 import astropy.units as u
+from astropy.coordinates import SkyCoord, CartesianRepresentation, CartesianDifferential
+from poliastro.frames import HeliocentricEclipticJ2000
 
 from daceypy import DA, array, ADS
 import daceypy.op as op
@@ -82,24 +84,27 @@ obs_J2000 = j0 - Jd_2000    #Observation Days since J2000 epoch
 mu = ac.G * ac.M_sun
 mu = mu.to('km**3 / s**2')
 
-earth = pl.bodies.Earth
-sun = pl.bodies.Sun
 
-#Use ICRS for propagation to epoch 
 epochs = at.Time(obs_times, scale='tdb')
-earth_positions = earth.emphem.upropagate(epochs)
-earth_pos_ICRS = earth_positions.r # Position vectors in km
-earth_vel_ICRS = earth_positions.v # Velocity vectors in km 
+acoords.solar_system_ephemeris.set("de440s")
 
-# Convert to ICRS to heliocentric J2000
-earth_pos_helio = []
-for pos in earth_pos_ICRS:
-    # Convert earth ICRS position to ecliptic J2000
-    pos_ecliptic = (acoords.ICRS(x=pos[0],y=pos[1],z=pos[2], unit=u.km)
-                    .transform_to(acoords.HeliocentricEclipticJ2000))
-    earth_pos_helio.append(pos_ecliptic)
+pv = [acoords.get_body_barycentric_posvel('earth', epoch) for epoch in epochs]
 
-# Define the 
+# Stack into arrays and convert to desired units
+x  = u.Quantity([p[0].x for p in pv]).to(u.km)
+y  = u.Quantity([p[0].y for p in pv]).to(u.km)
+z  = u.Quantity([p[0].z for p in pv]).to(u.km)
+vx = u.Quantity([p[1].d_x for p in pv]).to(u.km/u.s)   # get_body_* gives AU/day; convert to km/s
+vy = u.Quantity([p[1].d_y for p in pv]).to(u.km/u.s)
+vz = u.Quantity([p[1].d_z for p in pv]).to(u.km/u.s)
+
+pos = CartesianRepresentation(x, y, z)
+vel = CartesianDifferential(vx, vy, vz)
+
+X_ICRS = SkyCoord(pos.with_differentials(vel), frame='icrs', obstime=epochs)
+X_helio_ecl = X_ICRS.transform_to(HeliocentricEclipticJ2000)
+
+
 
 ########################### DAIOD #############################
 
