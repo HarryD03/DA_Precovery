@@ -87,7 +87,7 @@ sun = pl.bodies.Sun
 
 #Use ICRS for propagation to epoch 
 epochs = at.Time(obs_times, scale='tdb')
-earth_positions = earth.propagate(epochs)
+earth_positions = earth.emphem.upropagate(epochs)
 earth_pos_ICRS = earth_positions.r # Position vectors in km
 earth_vel_ICRS = earth_positions.v # Velocity vectors in km 
 
