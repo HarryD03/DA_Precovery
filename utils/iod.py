@@ -5,6 +5,137 @@ import daceypy.op as op
 from numpy.typing import NDArray
 from scipy.linalg import lu_factor, lu_solve      # or numpy.linalg for tiny systems
 import scipy.linalg as la
+import utils.time_reference as time_ref
+from utils.lambert_izzo import lambert_izzo
+
+def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[NDArray,array], r_obs_heliocentric: NDArray, t_obs_s: NDArray, mu):
+
+    def f(range_mag):                                       #deltV = residual + M(dranges)
+    
+        """
+        f(range_vec) returns the velocity difference between the second and first velocity estimates
+        for the central observation. The velocity difference is calculated by first calculating the
+        positions of the observations using the range vector and the observer position. The positions
+        are then used to calculate the velocities between each observation via the Izzo solution to
+        Lambert's problem. The velocity difference is then calculated as the difference between the
+        second and first velocity estimates. This function is used in the Newton method to find the
+        root of the velocity difference.
+        """
+        range_vec = np.zeros_like(i_rho)
+        for i in range(0, len(range_mag)):
+            range_vec[:,i] = op.dot(range_mag[i], i_rho[:,i])
+
+        r_vec = np.zeros_like(range_vec)
+        for i in range(0, len(range_vec)):                  #define posiiton vector for lamber_izzo
+            r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
+
+        vel = []
+        for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
+            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
+
+            #unpack solutions 
+            solution = velocities[0]
+
+            v1 = solution[:,i]
+            v2 = solution[:,i+1]
+
+            print(f"v1: {v1.cons()}\n")                 #debugging purposes
+            print(f"v2: {v2.cons()}\n")                 #debugging purposes
+
+            vel.append(v1)
+            vel.append(v2)
+
+        # Centre posiitons should have zero velocity difference
+        v2_plus = vel[2]                
+        v2_minus = vel[1]
+
+        DV = (v2_plus - v2_minus)
+
+        return DV                           #DV = [dv_i, dv_j, dv_k] + M(dranges)
+
+    def f1(range_vec):
+        """
+        Delta V Function for Angle Variables
+        """
+
+        r_vec = np.zeros_like(range_vec)
+        for i in range(0, len(range_vec)):
+            r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
+
+        vel = []
+        for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
+            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
+
+            #unpack solutions 
+            solution = velocities[0]
+
+            v1 = solution[:,i]
+            v2 = solution[:,i+1]
+
+            print(f"v1: {v1.cons()}\n")                 #debugging purposes
+            print(f"v2: {v2.cons()}\n")                 #debugging purposes
+
+            vel.append(v1)
+            vel.append(v2)
+
+        # Centre posiitons should have zero velocity difference
+        v2_plus = vel[2]                
+        v2_minus = vel[1]
+
+        DV = (v2_plus - v2_minus)
+
+        return DV
+
+    if not isinstance(RA, array) and not isinstance(DEC, array): #Case 1: DAIOD with independant DA Range Variables
+        
+        assert(isinstance(range_mag, array)), "Range Vector is not Initialised in DA"
+        range_mag0 = range_mag
+        flag = True
+        iter = 1
+        tol = 1e-8
+
+        while flag:
+
+            range_mag = newton_nomial_DAVec(range_mag0, np.zeros_like(range_mag0), f, 1e-16, 100) 
+            
+            #Evalute the Polynomial at range_mag 
+
+            difference = (range_mag - range_mag0).vnorm()   
+            if difference.cons() < tol:                     #Convergence condition
+                print(f"Iteration Number: {iter}\n")
+                flag = False
+        
+            range_mag0 = range_mag
+            iter += 1
+
+        return range_mag        #DA output
+
+
+    if isinstance(RA, array) and isinstance(DEC, array):        #Case 2: DAIOD with Range DA Variables dependant on angle DA.
+        assert(isinstance(range_mag, array)), "Range Vector must be a DA variable"
+        
+        i_rho = time_ref.create_da_los_vectors(RA, DEC)          #returns 3x3 matrix   
+                      #Line of sight unit vector
+        range_vec0 = op.dot(range_mag.cons(), i_rho)             #Taylor Polynomial Map
+        range_vec = Implicit_solver_DAVec(range_vec0, 0, f1, 6, x0DA=False, DAIOD=True, JacDAIOD=op.dot(range_mag.linear(), i_rho.cons()))
+        r_vec = np.zeros_like(range_vec)
+
+        for i in range(0, len(range_vec)):
+            r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
+
+    velocities = []
+    velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, cw=False)
+    solution = velocities[0]
+
+    v1 = solution[:,0]
+    v2 = solution[:,1]
+
+    print(f"v1: {v1.cons()}\n")                 #debugging purposes
+    print(f"v2: {v2.cons()}\n")                 #debugging purposes
+
+    rv = array([r_vec[:,1], v2])               #Define Epoch state of arc - DA parts correspond to observation uncertanity 
+
+    return rv
 
 
 def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
@@ -451,11 +582,11 @@ def Nf(x, f, df):
 #Newton iteration
     #x is a scalar value   
     if isinstance(x, DA):
-        k = DA.getMaxVariables() 
+        k = DA.getMaxVariables()        #Max variable is always the temp variable
         f = f.plug(k,0)
         df = df.plug(k,0)
 
-        if np.allclose(df, 0):
+        if np.allclose(df.cons(), 0):
             raise ZeroDivisionError("Derivative is zero in Newton iteration")  
         x1 = x - (f / df)    # f /df 
         return x1
@@ -473,21 +604,25 @@ def Nf(x, f, df):
         k = DA.getMaxVariables()
         NumVar = len(x) 
         DAVar = k - NumVar + 1
+       
         for i in range(NumVar):
             f = f.plug(DAVar + i, 0)
             for j in range(NumVar):
                 df[i][j] = df[i][j].plug(DAVar + j,0)
 
-        step = df @ f
+        J = df.cons()
+        inv_J = np.linalg.inv(J)  #Inverse Jacobian
+        step = inv_J @ f
         x1 = x - step
         return x1
 
 def Implicit_solver_DA(x_da: Union[float,DA], p, f: callable):
         """
             X needs to bethe last DA variable
-                x_da: Dependant Variable 
+                x_da: Dependant Variable x(p)
                 p_da: Independant DA Variables (p_nom + DA(p_da))
                 f:    Function for Newtons method
+                order: order to conduct the Newton iteration. MUST BE LESS THAN DA.MAXORDER()
             Return
                 x_da as a function of DA(p_da). x_da = x_nom + DA(p_da)
         """
@@ -499,11 +634,12 @@ def Implicit_solver_DA(x_da: Union[float,DA], p, f: callable):
         def df(fx):
             return fx.deriv(k)
     
-        while i <= (DA.getMaxOrder()):
-          x_da = Nf(x_da, f(x_da), df(f(x_da)))
+        while i-1 <= (DA.getMaxOrder()):
+          x_da = Nf(x_da, f(x_da,p), df(f(x_da,p)))
           i *= 2
 
         x_da = x_da.plug(k,0)
+
         return x_da
 
 def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables, x0DA=True, DAIOD=False, JacDAIOD=0):
@@ -515,34 +651,36 @@ def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables
             NumVariables: number of variables for Newton iterations
     return: x_da: root soultion of f(x_da; p) = 0 (array) 
     """
+    
     def Jac(fx):        #Calculate the Jacobian of the Matrix f(x; p). f(x)/DA(1)
-        Jac = np.zeros((NumVariables,NumVariables), dtype=object)
-        for i in range(NumVariables):
-            for j in range(NumVariables):
-                Jac[i][j] = fx[i].deriv(k+j)
-        return array(Jac) 
+
+        Jac = array([[fx[i].deriv(k+j) for j in range(NumVariables)] for i in range(NumVariables)])
+        return Jac
     
     iter = 1
+    MaxIter = DA.getMaxOrder()  #Maximum number of iterations for the Newton iteration  
+    k = DA.getMaxVariables() - NumVariables + 1
+    x = array([x0[i] + DA(k+i) for i in range(NumVariables)])         #Initialise Variables for Automatic differentiation
 
-    if DAIOD == False:
+    
+    if not DAIOD:
         k = DA.getMaxVariables() - NumVariables + 1
-        #Initialise Variables for Automatic differentiation
-        for i in range(NumVariables):
-            x0[i] = x0[i] + DA(k+i)
         
-        while iter <= (DA.getMaxOrder()):   #Higher Order Taylor Map Newton Iteration (Recalculate Inverse Jacobian at each iteration for HOTM solution)
-            x_da = Nf(x0, f(x0), Jac(f(x0)).inv())
-            print(x_da)
+        while iter <= MaxIter:   #Higher Order Taylor Map Newton Iteration (Recalculate Inverse Jacobian at each iteration for HOTM solution)
+            F = f(x, p)          #Evaluate the function at x
+            J = Jac(F)  #Calculate the inverse Jacobian of the function f at x
+
+            x_da = Nf(x, F, J)
+
             iter *= 2
-            x0 = x_da
+            x = x_da
         
         if x0DA:        #Return all DA parts in the solution: x = x0 + M(p,x)
             return x_da
     
         else:           #Return  x = x0 + M(p)
             for i in range(NumVariables):
-                k = DA.getMaxVariables() - NumVariables + i
-                x_da[i] = x_da[i].plug((k+1),0)
+                x_da[i] = x_da[i].plug((k+i),0)
             return x_da
     
         #Calculate the Jacobian of the callable funtion f wrt to the DA variables
@@ -604,7 +742,7 @@ def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[a
 
         return r2, v2
 
-def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float) -> float:
+def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float, order) -> float:
     """
     Newtons Method applied to DA to obtain Nomial Solution for dependant variable
     DA must have been initialised Prior
@@ -612,89 +750,94 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
     :param x0: Initial guess 
     :param p: Everything other variable in f
     :parma f: Callable function f(x; p) = 0 which will be evaluated at every newton iteration
-    :return: Nomial solution for x 
+    :return: solution for x around the nominal p such that f(x) = 0
     """
-
+    DA.init(order, 1)
     Max_variable = DA.getMaxVariables()
     
-    x = x0 + DA(Max_variable)  
+    xp = x0 + DA(Max_variable)  
     flag = True
     iter = 1
-
+    DA.pushTO(2)
     while flag:
-        F = f(x)
 
-        dF = F.deriv(Max_variable)
-        if dF.cons() == 0:
+        F = f(xp,p)
+        
+        dF = F.linear()
+        if dF[Max_variable-1] == 0:
             print(f"Iteration Number: {iter}\n")
             raise ValueError("Derivative became zero during iteration") 
-        x -= F.cons()/dF.cons()
+        
+
+        if abs(F.cons()) < tol or iter > MaxIter:
+            flag = False
+            if iter < MaxIter:
+                print(f"Maximum Number of Iterations reached")
+
+        x = xp - (F.cons()/dF[Max_variable-1])
         iter += 1
-
-        print(iter)
-        if abs(F.cons()) < tol:
-            flag = False
-        if iter > MaxIter:
-            flag = False
-            raise(f"Maximum Number of Iterations reached")
-
-    return x
+        xp.assign(x)
+    
+    x_nom = xp.cons() #Plug the last variable to zero to obtain the solution
+    DA.popTO()
+    return x_nom
 
 
-def newton_nomial_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float) -> float:
+def newton_nominal_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, NDArray], f: callable, order: int, tol: float=1e-9 , MaxIter: float=1000) -> float:
     """
     Newtons Method applied to DA to obtain Nomial Solution for dependant variable
     DA must have been initialised Prior
 
     :param x0: Initial guess 
-    :param p: Everything other variable in f
+    :param p: dependance variable in f such that x(p).
     :parma f: Callable function f(x; p) = 0 which will be evaluated at every newton iteration
     :return: Nomial solution for x as a Taylor Polynomial series 
     """
     NumVariables = len(x0)
+    DA.init(order, NumVariables)
     k = DA.getMaxVariables() - NumVariables + 1
-    #Initialise Variables for Automatic differentiation
-    x = np.zeros_like(x0, dtype=object)
-    for i in range(NumVariables):
-        x[i] = DA(x0[i]) + DA(k+i)
     
+    #Initialise Variables for Automatic differentiation
+    var_x = array.identity(NumVariables)
+    xp = x0 + var_x
+
     flag = True
     iter = 1
 
+    DA.pushTO(2)  # Push to the top of the stack for DA variables
+
     while flag:
-        F = f(x)
+        F = f(xp, p)
 
-        Jac = np.zeros((NumVariables,NumVariables), dtype=object)
-        for i in range(NumVariables):
-            for j in range(NumVariables):
-                Jac[i][j] = F[i].deriv(k+j)
+
+        #Jac = np.zeros((NumVariables,NumVariables), dtype=object)
+        #for i in range(NumVariables):
+        #    for j in range(NumVariables):
+        #        Jac[i][j] = F[i].deriv(k+j)
         
-        Jac = array(Jac)
+        #Jac = array(Jac)
+        Jac = F.linear()  # Get the linear part of the function F
 
-        for i in range(NumVariables):
-            F[i] = F[i].plug(k+i, 0)
-            for j in range(NumVariables):
-                Jac[i][j] = Jac[i][j].plug(k+i, 0)
+        #for i in range(NumVariables):
+        #    F[i] = F[i].plug(k+i, 0)
+        #    for j in range(NumVariables):
+        #        Jac[i][j] = Jac[i][j].plug(k+i, 0)
 
-        assert np.linalg.det(Jac.cons()) != 0, "Jacobian is singular, therefore invertable"
-        
-        x1 = x - (Jac.inv() @ array(F))
-        x1 = array(x1)
+        assert np.linalg.det(Jac) != 0, "Jacobian is singular, therefore invertable"
+
+        x = xp - (np.linalg.inv(Jac) @ F.cons())
         iter += 1
 
-        print(iter)
-        difference = (x1-x).vnorm()
-
-        print(difference.cons())
-        if all(x < tol for x in f(x1).cons()):
+        if np.all(np.abs(F.cons()) < tol) or iter > MaxIter:  # Check convergence
             flag = False
+            if iter > MaxIter:
+                print(f"Maximum Number of Iterations reached")
+                raise ValueError("No convergence: Relax Tolerance or increase Iterations")
 
-        if iter > MaxIter:
-            flag = False
-            print(f"Maximum Number of Iterations reached")
-        
-        x = x1
-
+        xp = x
+    
+    x = x.cons()
+    DA.popTO()  # Pop the top of the stack for DA variables
     return x
 def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
     """
@@ -796,3 +939,4 @@ def Kepler_DA(r1: Union[array, NDArray], v1: Union[array, NDArray], dt: float, m
     r2, v2 = lagrange_coefficients(a, dE_da, r1, v1, sigma, mu)
 
     return r2, v2
+

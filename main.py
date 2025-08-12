@@ -18,7 +18,7 @@ import astropy.constants as ac
 import astropy.coordinates as acoords
 import astropy.units as u
 from astropy.coordinates import SkyCoord, CartesianRepresentation, CartesianDifferential
-from poliastro.frames import HeliocentricEclipticJ2000
+from poliastro.frames.ecliptic import HeliocentricEclipticJ2000
 
 from daceypy import DA, array, ADS
 import daceypy.op as op
@@ -61,7 +61,7 @@ obs_YYYYMM_np = obs_date[["YYYY","MM"]].to_numpy()
 obs_date_np = np.column_stack((obs_YYYYMM_np, obs_day_time_np))
 
 
-#Define in terms of Poliastro Objects for ease of Conversion
+#Define in terms of Astropy Objects for ease of Conversion
 RA = RA_deg * u.deg                 #Right Ascension
 DEC = DEC_deg * u.deg               #Declination
 RA_sigma = (RA_sigma.to_numpy().T) * u.deg         #Right Ascension Error
@@ -86,23 +86,41 @@ mu = mu.to('km**3 / s**2')
 
 
 epochs = at.Time(obs_times, scale='tdb')
-acoords.solar_system_ephemeris.set("de440s")
+acoords.solar_system_ephemeris.set("builtin")
 
-pv = [acoords.get_body_barycentric_posvel('earth', epoch) for epoch in epochs]
+pv = [acoords.get_body_barycentric_posvel('earth', epoch) for epoch in epochs] # pv[i] = (pos, vel)
 
+
+earth_pos_helio = np.zeros((len(epochs), 3))
+earth_vel_helio = np.zeros((len(epochs), 3))
+ICRS_AU = np.zeros(3)
 # Stack into arrays and convert to desired units
-x  = u.Quantity([p[0].x for p in pv]).to(u.km)
-y  = u.Quantity([p[0].y for p in pv]).to(u.km)
-z  = u.Quantity([p[0].z for p in pv]).to(u.km)
-vx = u.Quantity([p[1].d_x for p in pv]).to(u.km/u.s)   # get_body_* gives AU/day; convert to km/s
-vy = u.Quantity([p[1].d_y for p in pv]).to(u.km/u.s)
-vz = u.Quantity([p[1].d_z for p in pv]).to(u.km/u.s)
-
-pos = CartesianRepresentation(x, y, z)
-vel = CartesianDifferential(vx, vy, vz)
-
-X_ICRS = SkyCoord(pos.with_differentials(vel), frame='icrs', obstime=epochs)
-X_helio_ecl = X_ICRS.transform_to(HeliocentricEclipticJ2000)
+for i, (pos, vel) in enumerate(pv):
+    #Convert positions from AU to km
+    pos_vel = CartesianRepresentation(
+    x=pos.x.to(u.km),
+    y=pos.y.to(u.km),
+    z=pos.z.to(u.km),
+        differentials={
+            's': CartesianDifferential(
+                d_x=vel.x.to(u.km/u.s),
+                d_y=vel.y.to(u.km/u.s),
+                d_z=vel.z.to(u.km/u.s)
+            )
+        }
+    )
+    
+    # Convert velocities from AU/day to km/s
+    earth_vel_helio[i] = [
+        vel.x.to(u.km/u.s).value,
+        vel.y.to(u.km/u.s).value,
+        vel.z.to(u.km/u.s).value
+    ]
+    ICRS = SkyCoord(pos_vel, frame='icrs', representation_type='cartesian', differential_type='cartesian', obstime=epochs[i])
+    helio = ICRS.transform_to(HeliocentricEclipticJ2000).cartesian
+    
+    earth_pos_helio[i] = helio.xyz.to(u.km) # (Nx3)
+    earth_vel_helio[i] = helio.differentials["s"].d_xyz.to(u.km/ u.s) #Nx3
 
 
 

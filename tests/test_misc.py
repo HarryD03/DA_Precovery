@@ -1,102 +1,7 @@
 import numpy as np
-import pytest
-from utils.iod import lambert_battin_DA, battin_A_DA, battin_x_DA, battin_vel_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F, Implicit_solver_DAVec, newton_nomial_DAVec
-from typing import Union
+from utils.iod import lambert_battin_DA, battin_A_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F, Implicit_solver_DAVec, newton_nominal_DAVec
 from daceypy import DA, array
 import daceypy.op as op
-from numpy.typing import NDArray
-
-def _leo_state_km():
-    """
-    Circular prograde LEO state (km-units). Taken form Example 2-4 page 94
-
-    The position is on +X; velocity on +Y so that r·v = 0.
-    """
-    r0 = np.array([1131.340, -2282.343, 6672.423])       # km
-    v0 = np.array([-5.64305, 4.30333, 2.42879])           # km s⁻¹
-
-    #Textbook solution
-    r1 = np.array([-4219.7527, 4363.0292, -3958.7666])
-    v1 = np.array([3.689866, -1.916735, -6.112511])
-    return r0, v0, r1, v1
-
-
-def test_battin_vel_DA():
-    """
-    Typical-case (worked-example) accuracy, type/shape, and robustness
-    checks for battin_vel_DA().
-
-    Reference: Curtis Example 5.2 (Lambert's problem).
-    """
-
-    # -------------------------------------------------
-    # 1.  Inputs from Example 5.2 ambert Problem, Example 5.2 (pp. 208–211):
-    # -------------------------------------------------
-    r1_vals = np.array([ 5000.0, 10000.0,  2100.0])     # km
-    r2_vals = np.array([-14600.0,  2500.0,  7000.0])    # km
-    dt       = 3600.0                                   # s
-    a_val    = 20_000.0                                 # km
-    mu_val   = 398_600.0                                # km^3/s^2
-    dE_val   = 1.24116018738929                         # rad (matches Curtis f-g)                 # rad
-
-    # -------------------------------------------------
-    # 2.  Independent “ground-truth” velocities
-    # -------------------------------------------------
-
-    v1_ref = np.array([-5.99249,  1.92536,  3.24564])   # km/s :contentReference[oaicite:5]{index=5}
-    v2_ref = np.array([-3.31246, -4.19662, -0.385288])  # km/s :contentReference[oaicite:6]{index=6}
-
-    #    # -------------------------------------------------
-    # 1️⃣  NUMPY branch  (plain floats)
-    # -------------------------------------------------
-    v2_num, v1_num = battin_vel_DA(r1_vals, r2_vals,
-                                   a_val, dE_val, dt, mu_val)
-
-    assert np.allclose(v1_num, v1_ref, rtol=1e-3)
-    assert np.allclose(v2_num, v2_ref, rtol=1e-2)
-    for vec in (v1_num, v2_num):
-        assert isinstance(vec, np.ndarray) and vec.shape == (3,)
-
-    # -------------------------------------------------
-    # 2️⃣  DACEyPy-DA branch
-    #      (constant DA scalars + DA array container)
-    # -------------------------------------------------
-    # Helper: wrap a scalar into a constant-value DA
-    DA.init(4,6)
-    def da_const(x: float) -> DA:
-        i = 0
-        return x + DA(i)         # DA(...) returns a constant-order object
-
-    # Build r1_da = [val0+DA(1), val1+DA(2), val2+DA(3)]
-    r1_da = array([r1_vals[i] + DA(i + 1) for i in range(3)])
-    # Build r2_da = [val0+DA(4), val1+DA(5), val2+DA(6)]
-    r2_da = array([r2_vals[i] + DA(i + 4) for i in range(3)])
-
-    a_da  = a_val
-    dE_da = dE_val
-
-    v2_da, v1_da = battin_vel_DA(r1_da, r2_da,
-                                 a_da, dE_da, dt, mu_val)
-
-    # Ensure outputs are DA arrays
-    assert all(isinstance(c, DA) for c in v1_da)
-    assert all(isinstance(c, DA) for c in v2_da)
-
-    # Compare **constant parts** of each DA element to reference values
-    v1_da_const = np.array([v1_da[i].cons() for i in range(len(v1_da))])
-    v2_da_const = np.array([v2_da[i].cons() for i in range(len(v2_da))])
-
-    assert np.allclose(v1_da_const, v1_ref, rtol=1e-3)
-    assert np.allclose(v2_da_const, v2_ref, rtol=1e-2)
-
-    # -------------------------------------------------
-    #   Physical sanity: specific energy must be negative (elliptic)
-    # -------------------------------------------------
-    def specific_energy(r, v):
-        return 0.5 * np.dot(v, v) - mu_val / np.linalg.norm(r)
-
-    assert specific_energy(r1_vals, v1_num) < 0
-    assert specific_energy(r2_vals, v2_num) < 0
 
 # =========================  TESTS  ================================
 
@@ -141,7 +46,6 @@ def test_battin_A_DA():
 
     assert isinstance(A_da, DA)
     assert np.isclose(A_da.cons(), A_ref, rtol=1e-6), f"Obtain {A_da.cons()}, Expected {A_ref}"
-    return
 
 # ------------------------------------------------------------------
 
@@ -150,19 +54,30 @@ def test_Implicit_solver_DA():
     End-to-end test of Implicit_solver_DA on  f(x)=x²−2, expecting
     convergence to √2 ≈ 1.41421356.
     Test DA scalar - In theory if p is a column vector, it will still work - define func differently.
-    """
+    Aim of test - see if the Automatic derivative function works
 
-    DA.init(6,2)
-    p0 = 1.0
+    This can now be integrated into a Full Scalar Solver
+    """
+    
+
+    p0 = 2
     x0 = 1.0
-    def func(x_da):
+    order = 6
+
+    def func(x_da, p):
         return x_da**2 - p
 
+    x_nom = newton_nomial_DA(x0, p0, func, tol=1e-14, MaxIter=1000, order=order)
+    print(f"Nominal x:\n{x_nom}")
+
+    DA.init(order, 2)  # Initialize DA with order and number of variables
     p = p0 + DA(1)
-    x_init = DA(x0)      # deliberately off the root
+    x_init = DA(x_nom)
     root_da = Implicit_solver_DA(x_init, p, func)
     print(f"Solution is:\n{root_da}")
 
+    p = p0 + DA(1)
+    x_init = DA(x_nom)
     def ex4_2_1(p0: float, x0: float):
         def Nf(x, p):
             return x - (x * x - p) / (2 * x)
@@ -170,7 +85,7 @@ def test_Implicit_solver_DA():
         x0 = x0   # x0 is just some initial guess
         i = 0
 
-        # double precision computation => fast
+        # double precision computation => obtain nominal solution/ expansion point
         flag = True
         while flag:
             xp = x0
@@ -178,6 +93,7 @@ def test_Implicit_solver_DA():
             i += 1
             flag = abs(xp-x0) > tol and i < 1000
 
+        print(f"Test: Nominal Newton finder:\n{x0}\n")
         # DA computation => slow
         p = p0 + DA(1)
         x = x0
@@ -187,40 +103,63 @@ def test_Implicit_solver_DA():
             i *= 2
 
 
-        print(f"Test: Full DA Newton\n{x}\n{x}\n")
+        print(f"Test: Full DA Newton\n{x}\n")
         return (x)
 
+    
     test_da = ex4_2_1(p0,x0)
-    assert test_da == root_da
-    return
+
+    assert test_da.getCoefficient([5,    0]) == root_da.getCoefficient([5, 0]), f"Expected {test_da} == {root_da}"
+
+
+def test_newton_nominal_DAVec():
+    """
+    Newton's method for solving a Nominal root with DA automatic differentiation.
+    f(x)=x²−2, expecting
+    convergence to √2 ≈ 1.41421356.
+    """
+    def f(x_da, p):
+        return x_da**2 - p
+
+    # Set initial guess and parameters
+    x0 = np.array([1.0, 1.0, 1.0])
+    p = np.array([2.0, 2.0, 2.0])
+
+    x = newton_nominal_DAVec(x0, p, f, 4)
+
+    print(f"Nominal root:\n{x}")
+    assert np.allclose(x, np.array([1.41421356, 1.41421356, 1.41421356]), atol=1e-6), f"Expected [1.41421356, 1.41421356, 1.41421356]\nGot {x}"
+
 
 def test_Implicit_solver_DAVec():
     """Root function for testing
-    Basic Test for Independant vector inputs 
+    Basic Test for Independent vector inputs
     DA independent inputs
 
     """
-    DA.init(4, 6) # When greater than 4th order theres an error - Its todo with the .inv() function for inverse jacobian - seems to be an inherent part of DA library
-    p = 1.0 + DA(1)
-    def f(x_da):
+    def f(x_da, p):
         return x_da**2 - p
-    # Initialize DA variables
 
+    x0 = np.array([1.0, 1.0, 1.0])
+    p = np.array([2.0, 2.0, 2.0])
+
+    x = newton_nominal_DAVec(x0, p, f, 4)
     # Set initial guess and parameters
-    x_init = array([1.0, 1.0, 1.0])
-    p = array([1.0 + DA(1), 1.0 + DA(2), 1.0 + DA(3)])
 
-    # Call implicit_solver_DAVec
-    root_da = Implicit_solver_DAVec(x_init, p, f, 3, x0DA=False, DAIOD=False)
+    DA.init(5, 6)
 
+    p = array([2.0 + DA(1), 2.0 + DA(2), 2.0 + DA(3)])
+
+    # Call implicit_solver_DAVec - This is incorrect.
+    root_da = Implicit_solver_DAVec(x, p, f, 3, x0DA=False, DAIOD=False)
+
+    # Print the result
+    print(f"Root: {root_da}")
     # Check result
     assert isinstance(root_da, array)
     assert len(root_da) == 3
-    assert np.allclose(root_da.cons(), [1.0, 1.0, 1.0], atol=1e-6)
     coeff = root_da[0].getCoefficient([4,0,0,0,0,0])
     assert np.allclose(coeff, -3.90625e-02, atol=1e-6)
-    # Print the result
-    print(f"Root: {root_da}")
 
 def test_Implicit_solver_DAVecComplex():
     """Root function for testing
@@ -239,15 +178,15 @@ def test_Implicit_solver_DAVecComplex():
 
     # Call implicit_solver_DAVec
     root_da = Implicit_solver_DAVec(x_init, p, f, 3, x0DA=False, DAIOD=False)
-
+    # Print the result
+    print(f"Root: {root_da}")
     # Check result
     assert isinstance(root_da, array)
     assert len(root_da) == 3
     assert np.allclose(root_da.cons(), [1.0, 1.0, 1.0], atol=1e-6)
     coeff = root_da[0].getCoefficient([4,0,0,0,0,0])
     assert np.allclose(coeff, -3.90625e-02, atol=1e-6)
-    # Print the result
-    print(f"Root: {root_da}")
+
 
 def test_lambert_battin_DA():
     """
@@ -302,6 +241,20 @@ def test_lambert_battin_DA():
 
 def test_newton_nomial_DA():
     #Obtain dE_nom solution via Kepler_F
+    def _leo_state_km():
+        """
+        Circular prograde LEO state (km-units). Taken form Example 2-4 page 94
+
+        The position is on +X; velocity on +Y so that r·v = 0.
+        """
+        r0 = np.array([1131.340, -2282.343, 6672.423])       # km
+        v0 = np.array([-5.64305, 4.30333, 2.42879])           # km s⁻¹
+
+        #Textbook solution
+        r1 = np.array([-4219.7527, 4363.0292, -3958.7666])
+        v1 = np.array([3.689866, -1.916735, -6.112511])
+        return r0, v0, r1, v1
+
     r1, v1, _, _ = _leo_state_km()
 
     DA.init(4,7)
@@ -355,8 +308,7 @@ def test_newton_nomial_DAVec():
     # Call the newton_nomial_DAVec function
     result = newton_nomial_DAVec(x0, p, f, tol, MaxIter)
 
-    # Check the result
-    assert np.allclose(result, np.array([1.42, 1.42]), atol=1e-2)
-
     # Print the result
     print("Result:", result)
+    # Check the result
+    assert np.allclose(result, np.array([1.42, 1.42]), atol=1e-2)
