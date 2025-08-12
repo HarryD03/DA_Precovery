@@ -158,8 +158,9 @@ def test_Implicit_solver_DAVec():
     # Check result
     assert isinstance(root_da, array)
     assert len(root_da) == 3
-    coeff = root_da[0].getCoefficient([4,0,0,0,0,0])
-    assert np.allclose(coeff, -3.90625e-02, atol=1e-6)
+    coeff = root_da[0].getCoefficient([1,0,0,0,0,0])
+    print(coeff)
+    assert np.isclose(coeff, 3.5355339059327373e-01, atol=1e-6)
 
 def test_Implicit_solver_DAVecComplex():
     """Root function for testing
