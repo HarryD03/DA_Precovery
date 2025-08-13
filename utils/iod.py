@@ -595,8 +595,12 @@ def Nf(x, f, df):
     #f is the callable function
     #df is the inverse Jacobian of f wrt x
     
-    if isinstance(x,array) and isinstance(df[0][0], float):      #DAIOD case (Csnt Jacobian)
-        step = df @ f      
+    if isinstance(x,array) and isinstance(df, array):      #DAIOD case (Csnt Jacobian)
+        k = DA.getMaxVariables()
+        f = f.plug(k,0)
+        df = df.plug(k,0)
+
+        step = f / df     
         x1 = x - step
         return x1
     
@@ -629,14 +633,20 @@ def Implicit_solver_DA(x_da: Union[float,DA], p, f: callable):
      
         i = 1
         k = DA.getMaxVariables()
-        x_da = x_da + DA(k)
+        xp = x_da + DA(k)
+
+        if isinstance(xp, np.ndarray):
+            xp = array(xp)
         
         def df(fx):
             return fx.deriv(k)
     
-        while i-1 <= (DA.getMaxOrder()):
-          x_da = Nf(x_da, f(x_da,p), df(f(x_da,p)))
+        while i <= (DA.getMaxOrder()):
+          F = f(xp, p)
+          dF = df(F)
+          x_da = Nf(xp, F, dF)
           i *= 2
+          xp = x_da
 
         x_da = x_da.plug(k,0)
 
@@ -762,7 +772,7 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
     while flag:
 
         F = f(xp,p)
-        if not isinstance(F,array):
+        if isinstance(F, np.ndarray):
             F = array(F)
         
         dF = F.linear()
@@ -780,7 +790,7 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
         iter += 1
         xp = x
     
-    if not isinstance(xp, array):
+    if isinstance(xp, np.ndarray):
         xp = array(xp)
     
     x_nom = xp.cons() #Plug the last variable to zero to obtain the solution

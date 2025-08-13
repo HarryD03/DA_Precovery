@@ -70,9 +70,9 @@ def test_Implicit_solver_DA():
     x_nom = newton_nomial_DA(x0, p0, func, tol=1e-14, MaxIter=1000, order=order)
     print(f"Nominal x:\n{x_nom}")
 
-    DA.init(order, 2)  # Initialize DA with order and number of variables
+    DA.init(6, 2)  # Initialize DA with order and number of variables
     p = p0 + DA(1)
-    x_init = DA(x_nom)
+    x_init = x_nom
     root_da = Implicit_solver_DA(x_init, p, func)
     print(f"Solution is:\n{root_da}")
 
@@ -116,8 +116,8 @@ def test_Implicit_solver_DA_maybeVec():
     def f(x_da, p):
         return x_da**2 - p
     
-    x0 = np.array([1.0, 1.0, 1.0])
-    p0 = np.array([2.0, 2.0, 2.0])
+    x0 = np.array([1.0, 2.0, 1.0])
+    p0 = np.array([2.0, 4.0, 2.0])
 
     x_nom0 = newton_nomial_DA(x0, p0, f, tol=1e-14, MaxIter=1000, order=4)
     print(f"Nominal x:\n{x_nom0}")
@@ -128,13 +128,38 @@ def test_Implicit_solver_DA_maybeVec():
     x_da = Implicit_solver_DA(x_nom0, p, f)
     print(f"Solution is:\n{x_da}")
 
-    x_nom1 = newton_nominal_DAVec(x0, p0, f, tol=1e-14, MaxIter=1000)
+    x_nom1 = newton_nomial_DA(x0[1], p0[1], f, tol=1e-14, MaxIter=1000, order=4)
     print(f"Nominal x :\n{x_nom0}\nNominal x (vectorized):\n{x_nom1}")
 
-    DA.init(4, 6)  # Initialize DA with order and number of variables
-    root_da = Implicit_solver_DAVec(DA(x_nom1), p, f)
+    DA.init(4, 2)  # Initialize DA with order and number of variables
+    p = p0[1] + DA(1)
+    root_da = Implicit_solver_DA(x_nom1, p, f)
     print(f"Solution:\n{x_da}\nSolution (vectorized):\n{root_da}\n")
 
+def test_Implicit_solver_DA_vectorized():
+    def f(x_da, p):
+        return x_da**2 - p
+        
+    x0 = np.array([1.0, 2.0, 1.0])
+    p0 = np.array([2.0, 4.0, 2.0])
+
+    x_nom0 = newton_nomial_DA(x0, p0, f, tol=1e-14, MaxIter=1000, order=4)
+    print(f"Nominal x:\n{x_nom0}")
+
+    DA.init(4, 4)  # Initialize DA with order and number of variables
+    p = array([p0[i] + DA(i + 1) for i in range(3)])
+
+    x_da = Implicit_solver_DA(x_nom0, p, f)
+    print(f"Solution is:\n{x_da}")
+
+    x_nom1 = newton_nomial_DA(x0[1], p0[1], f, tol=1e-14, MaxIter=1000, order=4)
+    print(f"Nominal x :\n{x_nom0}\nNominal x (vectorized):\n{x_nom1}")
+
+    DA.init(4, 2)  # Initialize DA with order and number of variables
+    p = p0[1] + DA(1)
+    root_da = Implicit_solver_DA(x_nom1, p, f)
+    print(f"Solution:\n{x_da}\nSolution (vectorized):\n{root_da}\n")
+    
 def test_newton_nominal_DAVec():
     """
     Newton's method for solving a Nominal root with DA automatic differentiation.
