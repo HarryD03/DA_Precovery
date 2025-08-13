@@ -86,29 +86,19 @@ def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[
 
         return DV
 
-    if not isinstance(RA, array) and not isinstance(DEC, array): #Case 1: DAIOD with independant DA Range Variables
+    if not isinstance(RA, array) and not isinstance(DEC, array): #Case 1: Obtain DA Range Vector
         
-        assert(isinstance(range_mag, array)), "Range Vector is not Initialised in DA"
-        range_mag0 = range_mag
-        flag = True
-        iter = 1
+        assert(isinstance(range_mag, np.ndarray)), "Range Vector is not Initialised in DA"
+        range_mag_guass = range_mag
         tol = 1e-8
 
-        while flag:
-
-            range_mag = newton_nomial_DAVec(range_mag0, np.zeros_like(range_mag0), f, 1e-16, 100) 
-            
-            #Evalute the Polynomial at range_mag 
-
-            difference = (range_mag - range_mag0).vnorm()   
-            if difference.cons() < tol:                     #Convergence condition
-                print(f"Iteration Number: {iter}\n")
-                flag = False
+        p0 = np.zeros_like(range_mag_guass)                                        
+        range_mag_L1 = newton_nominal_DAVec(range_mag_guass, p0, f, tol, 100)      #Obtain Range so that f(Range(0)) = 0
         
-            range_mag0 = range_mag
-            iter += 1
+        p = array([p0[i] + DA(i+1) for i in range(len(range_mag))])                #Define Range polynmoinal map
+        range_mag_L1 = newton_nominal_DAVec(range_mag_guass, p, f, tol, 100)    
 
-        return range_mag        #DA output
+        return range_mag_L1        #DA output
 
 
     if isinstance(RA, array) and isinstance(DEC, array):        #Case 2: DAIOD with Range DA Variables dependant on angle DA.
@@ -136,6 +126,132 @@ def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[
     rv = array([r_vec[:,1], v2])               #Define Epoch state of arc - DA parts correspond to observation uncertanity 
 
     return rv
+
+def DAIOD_1(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11, tol: float=1e-9):
+    """
+        Part 1 of the DAIOD Algorithm: Define the ranges such that DV(range_mag(p)) = 0
+
+        :param range_mag_guass: Range magnitude. See Guass_8th_seed() [km]
+        :param i_rho: Line of sight unit vector. See create_da_los_vectors() [-]
+        :param t_obs_s: The time of the observation. [s]
+        :param r_obs_heliocentric: Position of the observer. Assumed heliocentric plane, centre of Earth.  [km]
+        :param mu: The standard gravitational parameter. Assumed Sun Orbiting [km^3/s^2]
+        :param tol: The tolerance for the Newton method. [km]
+
+        :return range_mag_L1: Range Taylor Polynomial Map. range_mag_L1 + variations  [km]
+    """
+
+    def f(x, p):                                      #deltV = residual + M(dranges)
+
+        """
+        f(range_vec) returns the velocity difference between the second and first velocity estimates
+        for the central observation. The velocity difference is calculated by first calculating the
+        positions of the observations using the range vector and the observer position. The positions
+        are then used to calculate the velocities between each observation via the Izzo solution to
+        Lambert's problem. The velocity difference is then calculated as the difference between the
+        second and first velocity estimates. This function is used in the Newton method to find the
+        root of the velocity difference.
+        """
+        range_mag =  x + p                          #range_mag = Nominal + Perturbation
+
+        range_vec = np.zeros_like(i_rho)
+        for i in range(0, len(range_mag)):
+            range_vec[:,i] = op.dot(range_mag[i], i_rho[:,i])
+
+        r_vec = np.zeros_like(range_vec)
+        for i in range(0, len(range_vec)):                  #define posiiton vector for lamber_izzo
+            r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
+
+        vel = []
+        for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
+            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
+
+            #unpack solutions 
+            solution = velocities[0]
+
+            v1 = solution[:,i]
+            v2 = solution[:,i+1]
+
+            print(f"v1: {v1.cons()}\n")                 #debugging purposes
+            print(f"v2: {v2.cons()}\n")                 #debugging purposes
+
+            vel.append(v1)
+            vel.append(v2)
+
+        # Centre posiitons should have zero velocity difference
+        v2_plus = vel[2]                
+        v2_minus = vel[1]
+
+        DV = (v2_plus - v2_minus)
+
+        return DV                           #DV = [dv_i, dv_j, dv_k] + M(dranges)
+    
+    assert(isinstance(range_mag_guass, np.ndarray)), "Guass Range must be in Floats"
+    
+    p0 = np.zeros_like(range_mag_guass)                                        
+    range_mag_L1 = newton_nominal_DAVec(range_mag_guass, p0, f, order, tol, 100)      #Obtain Range so that f(Range(0)) = 0
+    
+    DA.init(order, 6)
+    p = array([p0[i] + DA(i+1) for i in range(len(range_mag_guass))])          #Define Range polynmoinal map
+    range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, order, tol, 100)
+
+    return range_mag_L1        #DA output
+
+def DAIOD_2(range_mag: array, RA: array, DEC: array, t_obs_s: array, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11):
+    """
+        Part 2 of DAIOD Algorithm: Define the range variation in terms of anglular variations
+
+    """
+    def f1(x, p):
+        """
+        Delta V Function for Angle Variables
+        :params x: Range Magnitude
+        :params p: RA and DEC array
+        """
+        RA, DEC = p
+        i_rho = time_ref.create_da_los_vectors(RA, DEC)
+        
+        range_mag = x
+
+        range_vec = np.zeros_like(i_rho)
+        for i in range(0, len(range_mag)):
+            range_vec[:,i] = op.dot(range_mag[i], i_rho[:,i])
+        
+        r_vec = np.zeros_like(range_vec)
+        for i in range(0, len(range_vec)):
+            r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
+
+        vel = []
+        for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
+            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
+
+            #unpack solutions 
+            solution = velocities[0]
+
+            v1 = solution[:,i]
+            v2 = solution[:,i+1]
+
+            print(f"v1: {v1.cons()}\n")                 #debugging purposes
+            print(f"v2: {v2.cons()}\n")                 #debugging purposes
+
+            vel.append(v1)
+            vel.append(v2)
+
+        # Centre posiitons should have zero velocity difference
+        v2_plus = vel[2]                
+        v2_minus = vel[1]
+
+        DV = (v2_plus - v2_minus)
+
+        return DV
+
+
+    range_mag_Jac = range_mag.linear()           #Linearized Range Vector: Jacobian of Range Vector used in previous iteration
+
+    p =  op.concat(RA, DEC)
+    range_mag_angles = Implicit_solver_DAVec(range_mag.cons(), p, f1, DA.getMaxVariables, x0DA=False, DAIOD=True, JacDAIOD=range_mag_Jac)
+    
+    return range_mag_angles
 
 
 def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
@@ -318,7 +434,7 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
     assert len(real_roots) > 0, "No positive real roots found"                  #If no real roots print
 
     #Inform user of real roots values, and conduct pruning if more than 1 real root
-    r_2_mag = real_roots                                                #Store possible solutions of r_2
+    r_2_mag = real_roots.real                                                #Store possible solutions of r_2
     if len(real_roots) > 0:
         print("There are more than 1 positive real roots.")
         range_1_mag = np.zeros((len(real_roots)))   # columns are different root value, rows are [x,y,z] components            #topocentric ranges
@@ -376,7 +492,7 @@ def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array
                 range_1 = range_1_mag[i] * obs_dir[:,0]  #convert range to vector
                 range_2 = range_2_mag[i] * obs_dir[:,1]  #convert range to vector
                 range_3 = range_3_mag[i] * obs_dir[:,2]  #convert range to vector
-                break
+                continue
 
     else:
         print(f"There is no positive real root: {r_2}\n")

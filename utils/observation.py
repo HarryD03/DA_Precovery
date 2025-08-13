@@ -254,24 +254,52 @@ def extract_N0(NEA: pd.DataFrame, t, year_col: str = "YYYY", month_col: str = "M
     cand = dist_year == dist_year.min()
     year_best_idx = year[cand].index
 
-    dist_month = (month.loc[year_best_idx] - M).abs()
-    cand2 = dist_month == dist_month.min()
-    ym_best_idx = dist_month.index[cand2]
+    # Get the year difference to determine direction
+    year_diff = year.loc[year_best_idx].iloc[0] - Y
 
-    # Get the month difference to determine if we're looking forward or backward
-    month_diff = month.loc[ym_best_idx].iloc[0] - M
+    if year_diff < 0:  # Previous year - get latest possible date
+        # Find latest month in that year
+        latest_month_idx = month.loc[year_best_idx].idxmax()
+        latest_month = month.loc[latest_month_idx]
+        
+        # Find all entries with that year and latest month
+        mask_latest = (year.loc[year_best_idx] == year.loc[latest_month_idx]) & \
+                     (month.loc[year_best_idx] == latest_month)
+        candidates = year_best_idx[mask_latest]
+        
+        # Get latest day in that month
+        match_index = day.loc[candidates].idxmax()
+        
+    elif year_diff > 0:  # Next year - get earliest possible date
+        # Find earliest month in that year
+        earliest_month_idx = month.loc[year_best_idx].idxmin()
+        earliest_month = month.loc[earliest_month_idx]
+        
+        # Find all entries with that year and earliest month
+        mask_earliest = (year.loc[year_best_idx] == year.loc[earliest_month_idx]) & \
+                       (month.loc[year_best_idx] == earliest_month)
+        candidates = year_best_idx[mask_earliest]
+        
+        # Get earliest day in that month
+        match_index = day.loc[candidates].idxmin()
+        
+    else:  # Same year (year_diff == 0)
+        dist_month = (month.loc[year_best_idx] - M).abs()
+        cand2 = dist_month == dist_month.min()
+        ym_best_idx = dist_month.index[cand2]
 
-    # If we're looking at a previous month, we want the latest day
-    # If we're looking at a next month, we want the earliest day
-    if month_diff < 0:  # Previous month
-        match_index = day.loc[ym_best_idx].idxmax()
-    elif month_diff > 0:  # Next month
-        match_index = day.loc[ym_best_idx].idxmin()
-    else:
-        # Same month, find closest day
-        dist_day = (day.loc[ym_best_idx] - D).abs()
-        match_index = dist_day.idxmin()
+        # Get the month difference to determine if we're looking forward or backward
+        month_diff = month.loc[ym_best_idx].iloc[0] - M
+
+        # If we're looking at a previous month, we want the latest day
+        # If we're looking at a next month, we want the earliest day
+        if month_diff < 0:  # Previous month
+            match_index = day.loc[ym_best_idx].idxmax()
+        elif month_diff > 0:  # Next month
+            match_index = day.loc[ym_best_idx].idxmin()
+        else:
+            # Same month, find closest day
+            dist_day = (day.loc[ym_best_idx] - D).abs()
+            match_index = dist_day.idxmin()
 
     return match_index, "closest"
-
-

@@ -187,10 +187,11 @@ def test_create_da_los_vectors():
     # 3. Call the function under test
     # -------------------------------------------------
     los = create_da_los_vectors(ra_rad, dec_rad)
-
+    los = los.astype(float)  # Ensure float type for accuracy checks
     # -------------------------------------------------
     # 4. Numerical accuracy (element-wise)
     # -------------------------------------------------
+    residual = abs(los - expected)
     assert np.allclose(los, expected, atol=1e-4), (
         f"LOS vectors incorrect:\nexpected\n{expected}\nactual\n{los}"
     )

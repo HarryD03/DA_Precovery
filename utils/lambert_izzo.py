@@ -165,14 +165,21 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
     xy = []
     for x_0 in initial_guess(T, L, M):          #This only generates the single revolution case (M == 0) x0 or stated revolution case (M) [x0l,x0r]
         
-        def f(x):
+        def f(x,p):
             """
             Function to obtain f(x) = T(x) - T* for Householder Iteration scheme
             """
+            T, L, M = p
             return x2tof(x, M, L) - T
-      
-        x_nom = householder_iter_DA_nom(x_0, f, DA.getMaxVariables(), tol=1e-12, MaxIter=20)
-        x_DA = householder_iter_DA_Map(x_nom, DA.getMaxVariables() ,f, tol=1e-12, MaxIter=20 )
+
+        if isinstance(T, DA) and isinstance(L, DA):
+            p0 = [T.cons(), L.cons(), M]  #Parameters for Householder Iteration Scheme
+        else:
+            p0 = [T, L, M]  #Parameters for Householder Iteration Scheme
+        
+        p = [T, L, M]  #Parameters for Householder Iteration Scheme in DA
+        x_nom = householder_iter_DA_nom(x_0, p0, f, tol=1e-12, MaxIter=20)
+        x_DA = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f, tol=1e-12, MaxIter=20)
         y_DA = op.sqrt(1 + L**2*(x_DA**2-1))
 
         tmp = [x_DA, y_DA]
@@ -283,7 +290,7 @@ def hypergeometricF(S1, tol=1e-11):
 
     return Sj 
 
-def householder_iter_DA_nom(x0, p0, f: callable, MaxVar, tol=1e-12, MaxIter=1000):
+def householder_iter_DA_nom(x0, p0, f: callable, tol=1e-12, MaxIter=1000):
     """
     Complete Household Iteration Scheme for root finding of implicit equation
     DA Reliant
@@ -293,7 +300,7 @@ def householder_iter_DA_nom(x0, p0, f: callable, MaxVar, tol=1e-12, MaxIter=1000
     :params f(x): Function for Root. E.G. find x for f(x)= T(x) - T* = 0.
     :return x: NOMIAL root of function. NO DA MAPPING
     """
-
+    MaxVar = DA.getMaxVariables()  #Get the maximum number of variables in the DA system
     x = x0 + DA(MaxVar)     #The dummy variable will always be the largest
     flag = True
     iter = 1

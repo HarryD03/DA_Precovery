@@ -1,11 +1,54 @@
 import numpy as np
 import pytest
-from utils.iod import Guass_8th_seed, f_g_series
+from utils.iod import Guass_8th_seed, f_g_series, DAIOD_1, DAIOD_2
 import numpy as np
 from typing import Union
 from daceypy import DA, array
 import daceypy.op as op
 from numpy.typing import NDArray
+
+def sample_data():
+    """
+        Generate Guass Solution for DAIOD (ECI)
+    """
+    pos_obs = np.array([
+        [3489.8, 3460.1, 3429.9],          # Observer position [x components at all instances]
+        [3430.2, 3460.1, 3490.1],          # Observer position [y components at all instances]
+        [4078.5, 4078.5, 4078.5]           # Observer position [z components at all instances]
+    ])
+
+    obs_dir = np.array([            # Direction vectors of the observations
+        [0.71643, 0.56897, 0.41841],            # Direction vector for x components
+        [0.68074, 0.79531, 0.87007],            # Direction vector for y components
+        [-0.15270,-0.20917,-0.26059]            # Direction vector for z components
+    ])
+
+    t = np.array([0.0, 118.10, 237.58])
+
+
+    # Should not raise and should return two lists of length 3
+    position, ranges, range_mag = Guass_8th_seed(pos_obs, obs_dir, t, mu=3.986e5)
+    return range_mag, obs_dir, t, pos_obs
+
+
+
+def test_DAIOD_case_1():
+    """
+        Integrated Test of the DAIOD Algorithm: Case 1 = Iterative Improvement of range_mag 
+    """
+    range_mag_guass, i_rho, t, pos_obs = sample_data()
+    range_mag_L1 = DAIOD_1(range_mag_guass, i_rho, t, 6, pos_obs, mu=3.986e5)
+
+    print(f"The Guass Range Magnitude:\n{range_mag_guass}")
+    print(f"The Refined Range Magnitude:\n{range_mag_L1}")
+    
+
+
+def test_DAIOD_case_2():
+    """
+        Integrated Test of the DAIOD Algorithm: Case 2 = Iterative Improvement of range_mag with Angle Variables
+    """
+
 
 
 # Textbook Example - Performance test
@@ -27,7 +70,7 @@ def test_Guass_8th_seed_basic():
 
 
     # Should not raise and should return two lists of length 3
-    position, ranges = Guass_8th_seed(pos_obs, obs_dir, t, mu=3.986e5)
+    position, ranges, range_mag = Guass_8th_seed(pos_obs, obs_dir, t, mu=3.986e5)
     r1_textbook_ex = np.array([
         6096.9,
         5907.5,
@@ -47,6 +90,7 @@ def test_Guass_8th_seed_basic():
     assert isinstance(ranges, np.ndarray)
     assert len(position) == 3
     assert len(ranges) == 3
+    assert np.isclose(np.linalg.norm(ranges[:,2]), range_mag[2])
 
     assert np.allclose(position[:,1], r2_textbook_ex, rtol=1e-3)
     assert np.allclose(position[:,0], r1_textbook_ex, rtol=1e-3)
