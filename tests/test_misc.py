@@ -111,6 +111,29 @@ def test_Implicit_solver_DA():
 
     assert test_da.getCoefficient([5,    0]) == root_da.getCoefficient([5, 0]), f"Expected {test_da} == {root_da}"
 
+def test_Implicit_solver_DA_maybeVec():
+    
+    def f(x_da, p):
+        return x_da**2 - p
+    
+    x0 = np.array([1.0, 1.0, 1.0])
+    p0 = np.array([2.0, 2.0, 2.0])
+
+    x_nom0 = newton_nomial_DA(x0, p0, f, tol=1e-14, MaxIter=1000, order=4)
+    print(f"Nominal x:\n{x_nom0}")
+
+    DA.init(4, 4)  # Initialize DA with order and number of variables
+    p = array([p0[i] + DA(i + 1) for i in range(3)])
+
+    x_da = Implicit_solver_DA(x_nom0, p, f)
+    print(f"Solution is:\n{x_da}")
+
+    x_nom1 = newton_nominal_DAVec(x0, p0, f, tol=1e-14, MaxIter=1000)
+    print(f"Nominal x :\n{x_nom0}\nNominal x (vectorized):\n{x_nom1}")
+
+    DA.init(4, 6)  # Initialize DA with order and number of variables
+    root_da = Implicit_solver_DAVec(DA(x_nom1), p, f)
+    print(f"Solution:\n{x_da}\nSolution (vectorized):\n{root_da}\n")
 
 def test_newton_nominal_DAVec():
     """

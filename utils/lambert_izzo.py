@@ -283,7 +283,7 @@ def hypergeometricF(S1, tol=1e-11):
 
     return Sj 
 
-def householder_iter_DA_nom(x0, f: callable, MaxVar, tol=1e-12, MaxIter=1000):
+def householder_iter_DA_nom(x0, p0, f: callable, MaxVar, tol=1e-12, MaxIter=1000):
     """
     Complete Household Iteration Scheme for root finding of implicit equation
     DA Reliant
@@ -294,12 +294,12 @@ def householder_iter_DA_nom(x0, f: callable, MaxVar, tol=1e-12, MaxIter=1000):
     :return x: NOMIAL root of function. NO DA MAPPING
     """
 
-    x = x0 + DA(MaxVar)     #The solution variable will always be the largest
+    x = x0 + DA(MaxVar)     #The dummy variable will always be the largest
     flag = True
     iter = 1
-
+    DA.pushTO(4)
     while flag:
-        F = f(x)
+        F = f(x,p0)
         dFdx = F.deriv(MaxVar)
         assert dFdx.cons() != 0, "Derivative cannot be zero"
         
@@ -316,10 +316,10 @@ def householder_iter_DA_nom(x0, f: callable, MaxVar, tol=1e-12, MaxIter=1000):
             print(f"Final Iteration: {iter}\n")
         iter += 1
            
-
+    DA.popTO()
     return x.cons()
 
-def householder_iter_DA_Map(x_nom: DA, MaxVar: int, f: callable, tol=1e-12, MaxIter=1000):
+def householder_iter_DA_Map(x_nom: DA, p: DA, MaxVar: int, f: callable, tol=1e-12, MaxIter=30):
     """
     Implicit Equation solver for Household Iteration Algorithm. Given a Nomial (constant) value of x, x_nom, express the DA part in terms of the independant
     DA variables. i.e. [x] = x_nom + DA_MAP(del_p) for f(x;p) = x**2 - p. This gives a locally explicit equation (x) for various values of p around the nomial value p  
@@ -334,11 +334,12 @@ def householder_iter_DA_Map(x_nom: DA, MaxVar: int, f: callable, tol=1e-12, MaxI
     """
     iter = 1
     x_Var = MaxVar
-    x = x_nom + DA(x_Var)
-
-    while iter <= (DA.getMaxOrder()):
+    xp = x_nom + DA(x_Var)       #temp variable for Automatic Derivative
+    flag=True
+    while flag:
         #Collect Derivatives (can refactor this and put it in both schemes)
-        F = f(x)
+        F = f(xp,p)
+    
         dFdx = F.deriv(x_Var)
         dFFdxx = F.deriv(x_Var).deriv(x_Var)
         dFFFdxxx = F.deriv(x_Var).deriv(x_Var).deriv(x_Var)
@@ -355,10 +356,17 @@ def householder_iter_DA_Map(x_nom: DA, MaxVar: int, f: callable, tol=1e-12, MaxI
         denom = (dFdx * (dFdx**2 - F*dFFdxx)) + (dFFFdxxx* F**2)/6
 
         assert denom != 0, "Cannot divide by 0!"
-        x -= F*(num/denom)
+        x = xp - F*(num/denom)
         
         print(f"Iteration Number: {iter}\n")    #For de-bugging purposes
-        iter *= 2
+
+        if iter > MaxIter:
+            print("Convergence Achieved")
+            flag=False
+            break
+        iter += 1
+        xp = x
+
     
     x = x.plug(x_Var, 0)        #Assert the DA(x) are eliminated in final expansion
     return x

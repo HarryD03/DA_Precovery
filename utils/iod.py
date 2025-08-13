@@ -752,7 +752,7 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
     :parma f: Callable function f(x; p) = 0 which will be evaluated at every newton iteration
     :return: solution for x around the nominal p such that f(x) = 0
     """
-    DA.init(order, 1)
+    DA.init(order,1)
     Max_variable = DA.getMaxVariables()
     
     xp = x0 + DA(Max_variable)  
@@ -762,6 +762,8 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
     while flag:
 
         F = f(xp,p)
+        if not isinstance(F,array):
+            F = array(F)
         
         dF = F.linear()
         if dF[Max_variable-1] == 0:
@@ -769,14 +771,17 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
             raise ValueError("Derivative became zero during iteration") 
         
 
-        if abs(F.cons()) < tol or iter > MaxIter:
+        if np.all(abs(F.cons()) < tol) or iter > MaxIter:
             flag = False
             if iter < MaxIter:
                 print(f"Maximum Number of Iterations reached")
 
         x = xp - (F.cons()/dF[Max_variable-1])
         iter += 1
-        xp.assign(x)
+        xp = x
+    
+    if not isinstance(xp, array):
+        xp = array(xp)
     
     x_nom = xp.cons() #Plug the last variable to zero to obtain the solution
     DA.popTO()

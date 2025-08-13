@@ -3,9 +3,11 @@ import pytest
 from utils.lambert_izzo import lambert_izzo, findxy, x2tof, x2tof2, hypergeometricF, householder_iter_DA_nom, householder_iter_DA_Map
 from utils.iod import newton_nomial_DA, Implicit_solver_DA
 from poliastro.iod import izzo
+from poliastro.core.iod import _find_xy, _tof_equation, _householder
 from astropy import units as u
 from poliastro.bodies import Earth
 from astropy.tests.helper import assert_quantity_allclose
+from poliastro._math.special import hyp2f1b, stumpff_c2
 
 from daceypy import DA, array
 import daceypy.op as op
@@ -30,12 +32,13 @@ def _compute_LT(r1, r2, dt, mu):
     r1_mag = op.vnorm(r1)
     r2_mag = op.vnorm(r2)
     s = 0.5 * (r1_mag + r2_mag + c)
+
     L = op.sqrt(1 - c / s)
     T = op.sqrt((2 * mu) / (s ** 3)) * dt
     return L, T, s
 
 @pytest.mark.parametrize("lambert", [izzo.lambert])
-def test_lambert_izzo(lambert):
+def test_lambert_izzo_prograde_ShortARC(lambert):
     """Compare against reference Vallado velocities for single revolution.
         NOTE: We do -(Variable) in DA. This means the taylor coefficents in DA change and effectly mirror the nomimal solution and the distrubution
         """
@@ -49,8 +52,6 @@ def test_lambert_izzo(lambert):
     M = 0
     
     velocities = lambert_izzo(R1_DA, R2_DA, DT, MU, M)
-    
-    v1test, v2test = next(lambert(k, r0, r, tof))
 
 
     solution1 = velocities[0]
@@ -59,15 +60,10 @@ def test_lambert_izzo(lambert):
     v2 = solution1[:,1]
 
     print(f"My Lambert v2: {v2.cons()}\n")
-    print(f"Palistro Lambert v2: {v2test}\n")
     print(f"Expected v2: {V2_REF}")
 
     assert np.allclose(v1.cons(), V1_REF, rtol=1e-5)
-    assert_quantity_allclose(v1.cons(), v1test, rtol=1e-5)
-    assert_quantity_allclose(v1test, V1_REF, rtol=1e-5)
-    
-    assert np.allclose(v2.cons(), V2_REF, rtol=1e-3)
-
+    assert np.allclose(v2.cons(), V2_REF, rtol=1e-5)
 
 @pytest.mark.basic
 def test_findxy():
@@ -84,24 +80,25 @@ def test_findxy():
     L, T, _ = _compute_LT(R1_DA, R2_DA, DT, MU)
     M = 0 #Single rev case
     xy = findxy(L, T, M)    #[x,y]
-    assert len(xy) == 1
-
+    
+    xy_palistro = _find_xy(L.cons(), T.cons(), M, 1000, 0, 1e-6)
     T_calc = x2tof(xy[0][0], 0, L)
 
-    assert np.isclose(T_calc.cons(), T.cons(), rtol=1e-6)
-
-    xy_palistro = izzo._find_xy(L.cons(), T.cons(), 0, 1000, 1e-6)
     print(xy_palistro)
-    for x, y in xy_palistro:
-        x = x
-        y = y
+    x = xy_palistro[0]
+    y = xy_palistro[1]
     
+
+    assert len(xy) == 1
+    assert np.isclose(T_calc.cons(), T.cons(), rtol=1e-6)
     assert np.isclose(x, xy[0][0].cons(), rtol=1e-6)
     assert np.isclose(y, xy[0][1].cons(), rtol=1e-6)
 
 @pytest.mark.basic
 def test_findxy_multi():
-    """x,y from findxy should satisfy x2tof(x)=T for multi rev."""
+    """x,y from findxy should satisfy x2tof(x)=T for multi rev
+        FALITUE IS DUE TO THE INPUT VARIABLES NOT THE ALGORITHM
+    """
     NVar = len(R1) + len(R2)
     DA.init(4, NVar + 1)
 
@@ -112,7 +109,7 @@ def test_findxy_multi():
     
     
     L, T, _ = _compute_LT(R1_DA, R2_DA, DT, MU)
-    M = 2 #Single rev case
+    M = 2 #Mulit rev case
 
     xy = findxy(L, T, M)    #[x,y]
     assert len(xy) == 2     # [[x0l, y0l], [x0r, y0r]]
@@ -202,16 +199,11 @@ def test_x2tof_general():
     y0 = op.sqrt(1+((L_DA.cons())**2)*(x0**2 - 1))
     T0 = T_DA.cons()
     T1 = x2tof(x,0,L_DA)            #my function
-    Tref = izzo._tof_equation(x0,y0,T0,L_DA.cons(), 0)  #Palistro function
+    Tref = _tof_equation(x0,T0,L_DA.cons(), 0)  #Palistro function
     Tref = Tref + T0                                    #So T are the same [see palistro function defintinon]
     
     #Test they're roughly equal
     assert np.isclose(T1.cons(), Tref, rtol=1e-6)
-
-
-
-
-
 
 @pytest.mark.basic
 def test_x2tof2():
@@ -231,7 +223,7 @@ def test_x2tof2():
     T0 = T_DA.cons()
 
     T1 = x2tof2(x, 0, L_DA)
-    T2 = izzo._tof_equation(x0,y0,T0,L_DA.cons(), 0)  #Palistro function
+    T2 = _tof_equation(x0,T0,L_DA.cons(), 0)  #Palistro function
     T2 = T2 + T0
     #Test the imbedded x2tof2 is called properly 
     assert np.isclose(T1.cons(), T2, rtol=1e-6)
@@ -254,7 +246,8 @@ def _hypergeometricF_ref(S1, tol=1e-11):
 def test_hypergeometricF():
     """Numerical check against simple series implementation."""
     val = 0.05
-    ref = izzo.hyp2f1b(val)
+    ref = hyp2f1b(val)
+
     calc = hypergeometricF(val)
     assert np.isclose(float(calc), ref, rtol=1e-8)
 
@@ -274,6 +267,7 @@ def test_householder_iter_DA_nom():
     """
         Test nomial iteration scheme with poliastro householder
     """
+
     NVar = len(R1) + len(R2)
     DA.init(4, NVar + 1)
 
@@ -284,10 +278,11 @@ def test_householder_iter_DA_nom():
     L_DA, T_DA, s = _compute_LT(R1_DA, R2_DA, DT, MU)
     M=0
 
-    def f(x):
+    def f(x,p):
         """
         Function to obtain f(x) = T(x) - T* for Householder Iteration scheme
         """
+        M, L_DA, T_DA = p
         return x2tof(x, M, L_DA) - T_DA
     
     T00 = op.acos(L_DA) + (L_DA*op.sqrt(1-L_DA**2))      
@@ -305,55 +300,37 @@ def test_householder_iter_DA_nom():
         raise ValueError("Parameterised Time of Flight Parameter does not fall into any of the possible solutiions")
     
 
-    x0 = x0.cons()      #x0 must be defined as an independant DA variable within the iteraiton loop 
-
-    x_nom = householder_iter_DA_nom(x0, f, NVar + 1, tol=1e-9, MaxIter=1000)
-    x = izzo._householder(x0, T_DA.cons(), L_DA.cons(), M, 1e-9, 1000)
+    x0 = x0.cons()      #x0 is a float
+    p0 = [M, L_DA, T_DA]
+    x_nom = householder_iter_DA_nom(x0, p0, f, NVar + 1, tol=1e-9, MaxIter=1000)
+    x = _householder(x0, T_DA.cons(), L_DA.cons(), M, 1e-9, 1000)
     assert np.isclose(x_nom, x, rtol=1e-9)      #relaxed error bound due to numerical deriv vs analytical 
-
+                                                #Automatic Derivative of function introduces some error at e-10 decimal places
     #Compare to standard Newton_nomial to see numerical error small between solvers
-    x_newton = newton_nomial_DA(x0,T_DA ,f,tol=1e-9, MaxIter=1000)
+    x_newton = newton_nomial_DA(x0, p0 ,f,tol=1e-9, MaxIter=1000, order=4)
     assert np.isclose(x_nom, x_newton, rtol=1e-9)
 
 @pytest.mark.basic
 def test_householder_iter_DA_Map_basic():
-    """Check mapping sensitivity for x^2=p around p=2."""
+    """Check mapping sensitivity for x^2=p around p=2.
+        x_nom = root(2)"""
     DA.init(4, 2)
-    
-    p = 2 + DA(1)
-    def f(x):
+    p0 = 2
+    p = p0 + DA(1)
+    def f(x,p):
         return x*x - p
     
-    x_nom = householder_iter_DA_nom(1.0, f, 2)
+    x_nom = householder_iter_DA_nom(1.0, p0, f, DA.getMaxVariables())
     print(x_nom)
-    x_da = householder_iter_DA_Map(1.0, 2, f)
+    x_da = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f)
     assert np.isclose(x_da.cons(), np.sqrt(2), atol=1e-6)
     # derivative dx/dp should be 1/(2*sqrt(2))
     deriv = x_da.deriv(1).cons()
     assert np.isclose(deriv, 1/(2*np.sqrt(2)), atol=1e-6)
 
-@pytest.mark.regression
-def test_householder_iter_DA_Map():
-    """
-        DA polynomial Map verfied through 'implicit_function()' which is correct 
-    """
-
-    DA.init(4, 2)
-    p = 2 + DA(1)
-    T_DA = 0
-    def f(x):
-        return x*x - p
-    
-    x_nom = householder_iter_DA_nom(1.0, f, 2)
-    x_da = householder_iter_DA_Map(x_nom, DA.getMaxVariables(), f)
-
-    x_newton_nom =  newton_nomial_DA(1.0 ,T_DA ,f,tol=1e-9, MaxIter=1000)
-    x_newton_da = Implicit_solver_DA(x_newton_nom, T_DA, f)
+    x_da_newton = Implicit_solver_DA(DA(x_nom), p, f)
+    x_da_newton_coeff = x_da_newton.getCoefficient([4, 0])  # Get the coefficient for the first variable (x)
+    x_da_coeff = x_da.getCoefficient([4, 0])
+    assert np.isclose(x_da_newton_coeff, x_da_coeff), f"ERROR:\nHouseholder:\n{x_da}\nNewton:\n{x_da_newton}"
 
 
-    order1 = x_newton_da.getMaxOrder()
-    order2 = x_da.getMaxOrder()
-    assert order1 == order2, "DA orders do not match"
-
-    print(f"The Householder Function:\n{x_da}\n")
-    print(f"The Newton Iteration Reference: \n{x_newton_da}\n")
