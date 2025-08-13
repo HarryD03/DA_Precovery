@@ -26,10 +26,10 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
     Dario Izzo Solution to Lamberts problem (Revisiting Lambert's Problem) as used in Pirovano's Paper.
     Algorithm 1
     DA compatiable 
-    :params :r1 Initial Position (Vector: 3x1, [i j k]')
-    :params :r2 Final Position (Vector: 3x1, [i j k]')
-    :params :dt Time of flight between two points in seconds
-    :params :mu Standard Gravitional Parameter
+    :param :r1 Initial Position (Vector: 3x1, [i j k]')
+    :param :r2 Final Position (Vector: 3x1, [i j k]')
+    :param :dt Time of flight between two points in seconds
+    :param :mu Standard Gravitional Parameter
 
     :returns :velocities. An array of [(v1, v2), (v1,v2)] depending on the number of revolutions
     """
@@ -206,7 +206,7 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
     
     if isinstance(x, DA):
         dist = np.abs(x.cons() - 1)
-        rho = abs(E.cons())
+        rho = np.abs(E.cons())
         xx = E.cons()
     
     if isinstance(x, float):
@@ -227,14 +227,21 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
         return T
     
     else:                                  #Lancaster formulation performs best in general case
-        g = x * y - L*E
+        g = (x*y) - (L*E)
         if xx < 0:                         #xx is a variable E.cons() dependant on the DA or float nature on E 
             l = op.acos(g)
             d = M * np.pi + l
         else:
             f = op.sqrt(rho) * (y - L * x)
-            d = op.log(f + g)
-        
+            log_arg = f + g
+            
+            # Safety check for DA objects
+            if isinstance(log_arg, DA):
+                if log_arg.cons() <= 0:
+                    raise ValueError(f"Logarithm argument is non-positive: {log_arg.cons()}")
+            elif log_arg <= 0:
+                raise ValueError(f"Logarithm argument is non-positive: {log_arg}")
+            
         T = (x - L * y - d/op.sqrt(rho)) / E
         return T
     return
@@ -317,6 +324,13 @@ def householder_iter_DA_nom(x0, p0, f: callable, tol=1e-12, MaxIter=1000):
         denom = (dFdx.cons() * (dFdx.cons()**2 - F.cons()*dFFdxx.cons()) + dFFFdxxx.cons() * F.cons()**2 / 6 )
 
         x -= F.cons()*(num/denom)
+
+        # CRITICAL: Constrain x to elliptical region for elliptical orbits
+        if x.cons() >= 0.99:  # Prevent x from exceeding ~1 (hyperbolic)
+            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds 0.99, indicating a hyperbolic orbit.")
+        elif x.cons() <= -0.99:  # Prevent extreme negative values
+            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds -0.99, indicating a hyperbolic orbit.")
+
         print(f"Iteration Number: {iter}\n")
         if abs(F.cons()) < tol or iter > MaxIter:
             flag = False

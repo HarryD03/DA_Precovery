@@ -6,7 +6,6 @@ from numpy.typing import NDArray
 from scipy.linalg import lu_factor, lu_solve      # or numpy.linalg for tiny systems
 import scipy.linalg as la
 import utils.time_reference as time_ref
-from utils.lambert_izzo import lambert_izzo
 
 def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[NDArray,array], r_obs_heliocentric: NDArray, t_obs_s: NDArray, mu):
 
@@ -154,13 +153,10 @@ def DAIOD_1(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, orde
         """
         range_mag =  x + p                          #range_mag = Nominal + Perturbation
 
-        range_vec = np.zeros_like(i_rho)
-        for i in range(0, len(range_mag)):
-            range_vec[:,i] = op.dot(range_mag[i], i_rho[:,i])
-
-        r_vec = np.zeros_like(range_vec)
-        for i in range(0, len(range_vec)):                  #define posiiton vector for lamber_izzo
-            r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
+        range_vec = range_mag * i_rho
+        
+                         #define posiiton vector for lamber_izzo
+        r_vec = range_vec + r_obs_heliocentric
 
         vel = []
         for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
@@ -350,6 +346,7 @@ def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDA
     
     # Test 3: Specific energy is negative - asteroid elliptic orbit
     specific_energy = (np.linalg.norm(v2)**2 / 2) - mu / (np.linalg.norm(r2))
+    
     if specific_energy >= 0:
         r1[:] = np.nan
         r2[:] = np.nan
@@ -366,17 +363,17 @@ def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDA
 
     return r1, r2, r3, v2 # Return the positions if all checks pass
 
-def Guass_8th_seed(pos_obs: Union[NDArray, array], obs_dir: Union[NDArray, array], t: NDArray, mu=1.32712440018e11) -> NDArray[np.double]:
-    #Taken from Orbital Mechanics for Engineering Students (4th ed.) by Curtis. p.242 Algorithm 5.5. and Armillien Aphopis
-    #The Seed takes real numbers not DA numbers.
-    #Inputs:
-    #   Pos_obs: 2D array of Observer positions in Heliocentric frame of reference from angle rotation matrix
-    #           Rows are compoents, columns are observations instances
-    #   t: 1D array of times in seconds
-    #   obs_dir: 2D array of unit vectors pointing from observer to the point of interest, every column is an observation instance the rows are components x y z
-    # 2-BP assumption:
-    #   Assume the observations lie on the same plane
-   
+def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440018e11) -> NDArray[np.double]:
+    """
+    Taken from Orbital Mechanics for Engineering Students (4th ed.) by Curtis. p.242 Algorithm 5.5. and Armillien Aphopis
+    The Seed takes real numbers not DA numbers.
+
+    :param Pos_obs: 2D array of Observer positions in Heliocentric frame of reference from angle rotation matrix
+               Rows are compoents, columns are observations instances
+    :param t: 1D array of times in seconds
+    :param obs_dir: 2D array of unit vectors pointing from observer to the point of interest, every column is an observation instance the rows are components x y z
+    :param 2-BP assumption: Assume the observations lie on the same plane
+   """
     dt_1 = t[0] - t[1]
     dt_3 = t[2] - t[1]
     dt = dt_3 - dt_1

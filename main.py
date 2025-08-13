@@ -39,7 +39,7 @@ order = 4                   #Order of Taylor Polynminal Expansion
 
 #Extraction of Data
 NEA = obs.load_observation_file(filepath)
-obs_date, RA, DEC, RA_sigma, DEC_sigma = obs.extract_obs(NEA, extraction_method=observation_extraction_method, N_lower=0, N_upper=3)
+obs_date, RA, DEC, RA_sigma, DEC_sigma = obs.extract_obs(NEA, extraction_method=observation_extraction_method, N_lower=44, N_upper=150)
 
 #Convert from Pandas to Numpy + Convert From MPC2Degrees
 # Convert all numeric columns to float
@@ -72,13 +72,15 @@ obs_times = at.Time(
      for year, month, day, hour, minute, second in obs_date_np],
     scale='ut1'
 )
-#Observatory location: Measurements in Equatorial RA DEC so not needed
 
 #Get Observation times in J2000 epoch for Guass IOD
 j0 = obs_times.jd   # Julian Date
 Jd_2000 = 2451545.0 # J2000 epoch in Julian Days
-obs_J2000 = j0 - Jd_2000    #Observation Days since J2000 epoch
+obs_J2000 = (j0 - Jd_2000) * u.day    #Observation Days since J2000 epoch
 
+# Delete all observations but the start, end and the center observation 
+
+obs_times, RA, DEC, RA_sigma, DEC_sigma, obs_J2000= obs.filter_observations_to_three(obs_times, RA, DEC, RA_sigma, DEC_sigma, obs_J2000)
 ########################## Define Heliocentric Frame and Earth Location within it ##############
 
 mu = ac.G * ac.M_sun
@@ -126,11 +128,12 @@ for i, (pos, vel) in enumerate(pv):
 
 ########################### DAIOD #############################
 
+
 # Convert RA, DEC measurements to radians.
-RA_rad = RA_deg.to(u.rad).value
-DEC_rad = DEC_deg.to(u.rad).value
-RA_sigma_rad = RA_sigma_deg.to(u.rad).value
-DEC_sigma_rad = DEC_sigma_deg.to(u.rad).value
+RA_rad = RA.to(u.rad).value
+DEC_rad = DEC.to(u.rad).value
+RA_sigma_rad = RA_sigma.to(u.rad).value
+DEC_sigma_rad = DEC_sigma.to(u.rad).value
 
 #Convert time arrays to all seconds Numpy for Guass IOD
 time_sec = obs_J2000.to(u.s).value 
@@ -138,21 +141,22 @@ time_sec = obs_J2000.to(u.s).value
 assert len(time_sec) == 3, f"ERROR:\nOnly 3 observations times can be used.\n{len(time_sec)} observations were stored"
 
 # Generate Nominal Guass Range
-observer_position_geocentric = np.zeros_like(RA_rad) # The Observer is at the centre of the Earth as RA+DEC are geocentric
+observer_position_helio = earth_pos_helio.T # The Observer is at the centre of the Earth as RA+DEC are geocentric
 i_rho = time_ref.create_da_los_vectors(RA_rad, DEC_rad) #Define geocentric range vector [ρ̂x, ρ̂y, ρ̂z]ᵢ'
-pos_guass, range_guass, range_mag = iod.Guass_8th_seed(observer_position_geocentric, i_rho, time_sec, mu=mu.value)
+i_rho = i_rho.astype(np.float64)
+pos_guass, range_guass, range_mag = iod.Guass_8th_seed(observer_position_helio, i_rho, time_sec, mu=mu.value)
 
 # DAIOD part 1: Conuduct Position Refinement (DA iterative refininment for Guass IOD Range magnitude)
 DA.init(order, 3)
 range_mag_DA = array([range_mag[0] + DA(1), range_mag[1] + DA(2), range_mag[2] + DA(3)])
-_, range_mag_DAIOD = DAIOD(RA, DEC, range_mag_DA, observer_position_geocentric, time_sec, mu=mu.value)
+_, range_mag_DAIOD = DAIOD(RA, DEC, range_mag_DA, observer_position_helio, time_sec, mu=mu.value)
 
 # DAIOD part 2: Conduct Velocity Refinement (Lambert central vleocity condition refinement)
 DA.init(order, 6)
 RA_DA = array([RA[i] + 3*RA_sigma_rad*DA(i + 1) for i in range(3)])
 DEC_DA = array([DEC[i] + 3*DEC_sigma_rad*DA(i + 4) for i in range(3)])    # Scale RA and DEC DA part so that when evaluated its within the [-1,1] range
 
-X_0_ECI_CC, _ = DAIOD(RA_DA, DEC_DA, range_mag_DAIOD, observer_position_geocentric, time_sec, mu=mu.value) 
+X_0_ECI_CC, _ = DAIOD(RA_DA, DEC_DA, range_mag_DAIOD, observer_position_helio, time_sec, mu=mu.value) 
 
 #X_0 = Central Orbit state (ECI-CC) at Epoch.
 

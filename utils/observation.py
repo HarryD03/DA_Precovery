@@ -303,3 +303,76 @@ def extract_N0(NEA: pd.DataFrame, t, year_col: str = "YYYY", month_col: str = "M
             match_index = dist_day.idxmin()
 
     return match_index, "closest"
+
+def filter_observations_to_three(obs_times, RA, DEC, RA_sigma, DEC_sigma, obs_J2000):
+    """
+    Filter observations to keep only first, last, and temporal midpoint when more than 3 observations exist.
+    Midpoint is determined by finding the closest observation to the temporal center using J2000 day values.
+    
+    Args:
+        obs_times: Astropy Time array of observation times
+        RA, DEC: Right ascension and declination arrays
+        RA_sigma, DEC_sigma: Uncertainty arrays
+        obs_J2000: Observations from J2000
+        
+    Returns:
+        Tuple of filtered arrays: (obs_times, RA, DEC, RA_sigma, DEC_sigma, time_sec)
+    """
+    import numpy as np
+    import astropy.units as u
+    import astropy.time as at
+    
+    n_obs = len(obs_times)
+    
+    if n_obs <= 3:
+        print(f"Using all {n_obs} observations (≤3)")
+        return obs_times, RA, DEC, RA_sigma, DEC_sigma, obs_J2000
+
+    print(f"\nFiltering {n_obs} observations to 3 (first, temporal midpoint, last)...")
+    
+    
+    # Calculate indices for first and last observations
+    first_idx = 0
+    last_idx = n_obs - 1
+    
+    # Calculate temporal midpoint using obs_J2000 values
+    first_time_val = obs_J2000.value[first_idx]
+    last_time_val = obs_J2000.value[last_idx]
+    mid_time_val = first_time_val + (last_time_val - first_time_val) / 2
+    
+    # Find observation closest to temporal midpoint
+    time_diffs = np.abs(obs_J2000.value - mid_time_val)
+    mid_idx = np.argmin(time_diffs)
+    
+    # Create index array for filtering
+    keep_indices = [first_idx, mid_idx, last_idx]
+    
+    # Remove duplicates and sort (in case mid_idx equals first_idx or last_idx)
+    keep_indices = sorted(list(set(keep_indices)))
+    
+    # Logging
+    print(f"Original observations: {n_obs}")
+    print(f"Time span (days since J2000): {first_time_val:.6f} to {last_time_val:.6f}")
+    print(f"Temporal midpoint (days since J2000): {mid_time_val:.6f}")
+    print(f"Keeping observations at indices: {keep_indices}")
+    print(f"Selected observation times:")
+    for i, idx in enumerate(keep_indices):
+        time_diff_days = abs(obs_J2000.value[idx] - mid_time_val) if idx == mid_idx else None
+        time_diff_hours = time_diff_days * 24 if time_diff_days is not None else None
+        label = "FIRST" if idx == first_idx else "LAST" if idx == last_idx else f"MID (Δt={time_diff_hours:.1f}h)"
+        print(f"  {i+1}. Index {idx}: {obs_times[idx].iso} [{label}]")
+        print(f"      J2000 + {obs_J2000.value[idx]:.6f} days")
+    
+    # Filter observation arrays only
+    obs_times_filtered = obs_times[keep_indices]
+    RA_filtered = RA[keep_indices]
+    DEC_filtered = DEC[keep_indices]
+    RA_sigma_filtered = RA_sigma[0,keep_indices]
+    DEC_sigma_filtered = DEC_sigma[0,keep_indices]
+    obs_J2000_filtered = obs_J2000[keep_indices]
+
+    print(f"Filtered to {len(obs_times_filtered)} observations")
+    print(f"Time intervals (days): {np.diff(obs_J2000_filtered.value)}")
+    print(f"Time intervals (seconds): {np.diff(obs_J2000_filtered.to(u.s).value)}")
+
+    return obs_times_filtered, RA_filtered, DEC_filtered, RA_sigma_filtered, DEC_sigma_filtered, obs_J2000_filtered
