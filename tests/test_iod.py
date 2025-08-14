@@ -6,8 +6,9 @@ from typing import Union
 from daceypy import DA, array
 import daceypy.op as op
 from numpy.typing import NDArray
+from utils.lambert_izzo import lambert_izzo
 
-def sample_data():
+def sample_data_Earth():
     """
         Generate Guass Solution for DAIOD (ECI)
     """
@@ -27,8 +28,29 @@ def sample_data():
 
 
     # Should not raise and should return two lists of length 3
-    position, ranges, range_mag = Guass_8th_seed(pos_obs, obs_dir, t, mu=3.986e5)
-    return range_mag, obs_dir, t, pos_obs
+    position, ranges, range_mag, v_2 = Guass_8th_seed(pos_obs, obs_dir, t, mu=3.986e5)
+    return range_mag, obs_dir, t, pos_obs, position, v_2
+
+def test_Lambert_Guass():
+    """
+        Testing Gauss + DAIOD for a Gauss compliant observations (Earth)
+    """
+    _, _, t, _, r_vec, v_2 = sample_data_Earth()
+
+    # Pass Gauss solution into Lambert
+    r1 = r_vec[:, 0]
+    r2 = r_vec[:, 1]
+    dt = t[1] - t[0]  # Time difference between first two observations
+    velocities = lambert_izzo(r1, r2, dt, mu=3.986e5, multi_revs=0)
+
+    
+
+
+def DAIOD_Gauss_Lambert_sun():
+    """
+        Testing Gauss + DAIOD for a Lambert compliant observations (Heliocentric)
+    """
+    pass
 
 
 
@@ -36,8 +58,8 @@ def test_DAIOD_case_1():
     """
         Integrated Test of the DAIOD Algorithm: Case 1 = Iterative Improvement of range_mag 
     """
-    range_mag_guass, i_rho, t, pos_obs = sample_data()
-    range_mag_L1 = DAIOD_1(range_mag_guass, i_rho, t, 6, pos_obs, mu=3.986e5)
+    range_mag_guass, i_rho, t, pos_obs = sample_data_Earth()
+    range_mag_L1 = DAIOD_1(range_mag_guass, i_rho, t, 6, pos_obs, mu=3.986e5)       #issue is how range_mag is handled in DAIOD_1
 
     print(f"The Guass Range Magnitude:\n{range_mag_guass}")
     print(f"The Refined Range Magnitude:\n{range_mag_L1}")
@@ -48,6 +70,7 @@ def test_DAIOD_case_2():
     """
         Integrated Test of the DAIOD Algorithm: Case 2 = Iterative Improvement of range_mag with Angle Variables
     """
+    pass
 
 
 

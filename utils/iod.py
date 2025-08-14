@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from scipy.linalg import lu_factor, lu_solve      # or numpy.linalg for tiny systems
 import scipy.linalg as la
 import utils.time_reference as time_ref
-
+from utils.lambert_izzo import lambert_izzo
 def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[NDArray,array], r_obs_heliocentric: NDArray, t_obs_s: NDArray, mu):
 
     def f(range_mag):                                       #deltV = residual + M(dranges)
@@ -113,7 +113,7 @@ def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[
             r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
 
     velocities = []
-    velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, cw=False)
+    velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, cw=True)
     solution = velocities[0]
 
     v1 = solution[:,0]
@@ -160,7 +160,7 @@ def DAIOD_1(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, orde
 
         vel = []
         for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
-            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
+            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=True)
 
             #unpack solutions 
             solution = velocities[0]
@@ -192,6 +192,7 @@ def DAIOD_1(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, orde
     range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, order, tol, 100)
 
     return range_mag_L1        #DA output
+
 
 def DAIOD_2(range_mag: array, RA: array, DEC: array, t_obs_s: array, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11):
     """
@@ -475,10 +476,10 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
             
             
             
-            v2 = 1/((f_1*g_3) - (f_3*g_1)) * (-f_3*r_1[:,i] + f_1*r_3[:,i]) 
+            v_2 = 1/((f_1*g_3) - (f_3*g_1)) * (-f_3*r_1[:,i] + f_1*r_3[:,i]) 
 
             #Assess the 3 positions for feasibility -
-            r_1, r_2, r_3, v_2 = position_feasibility(r_1[:,i], r_2[:,i], r_3[:,i], v2, mu)
+            r_1, r_2, r_3, v_2 = position_feasibility(r_1[:,i], r_2[:,i], r_3[:,i], v_2, mu)
 
             if not np.any(np.isnan([r_1, r_2, r_3, v_2])):
                 print(f"Feasibility passed for root {i}:")
@@ -506,7 +507,7 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
     position = np.array([r_1, r_2, r_3]).T
     ranges = np.array([range_1, range_2, range_3]).T
     range_mag = np.hstack([range_1_mag, range_2_mag, range_3_mag])
-    return position, ranges, range_mag
+    return position, ranges, range_mag, v_2
 
 
 #

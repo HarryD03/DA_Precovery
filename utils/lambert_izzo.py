@@ -56,7 +56,7 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
     #Numpy Branch 
     if isinstance(r1_radial_dir[0], float):
         print("ENTERING NUMPY BRANCH: Position 1 is entered as a NumPy array type")
-        assert isinstance(r2_radial_dir, NDArray), f"Position 2 must have both NumPy array types"
+        assert isinstance(r2_radial_dir, np.ndarray), f"Position 2 must have both NumPy array types"
         
         h_dir  = np.cross(r1_radial_dir, r2_radial_dir)
         
@@ -80,8 +80,8 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
             L = -L
             h_dir = - h_dir
             
-    r1_tangent_dir = h_dir.cross(r1_radial_dir)
-    r2_tangent_dir = h_dir.cross(r2_radial_dir)
+        r1_tangent_dir = h_dir.cross(r1_radial_dir)
+        r2_tangent_dir = h_dir.cross(r2_radial_dir)
     
     if cw: #Retrograde motion
         r1_tangent_dir = -r1_tangent_dir
@@ -140,22 +140,39 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
         assert isinstance(L, float), "Must be Numpy"
         assert abs(L) < 1, "Lambda Variable must be less than 1"
         assert T > 0, "Standard time parameter must be posiitve"        #Mistake on original paper
+        T_cons = T
 
     if isinstance(T, DA):
         print("Algorithm 2 ENTERING DA BRANCH")
         assert isinstance(L, DA), "Must be DA"
         assert abs(L.cons()) < 1, "Lambda Variable must be less than 1"
         assert T.cons() > 0, "Standard time parameter must be positive"
+        T_cons = T.cons()  #Convert to float for further calculations
 
-    M_max = int(np.floor(T.cons()/np.pi))                   #Maximum number of revolutions for time period
-    T00 = op.acos(L) + (L*op.sqrt(1-L**2))      
+    M_max = int(np.floor(T_cons/np.pi))                   #Maximum number of revolutions for time period
+    T00 = op.acos(L) + (L*op.sqrt(1-L**2))
     T0 = T00 + M_max  * np.pi
     T1 = 2/3 * (1 - L**3)         #Standard Time parameter if parabolic orbit (Max Energy transfer)
+
+    if isinstance(T00, DA):
+        T00_cons = T00.cons()
+        T0_cons = T0.cons()
+    if isinstance(T00, float):
+        T00_cons = T00
+        T0_cons = T0
     
+    T1 = 2/3 * (1 - L**3)         #Standard Time parameter if parabolic orbit (Max Energy transfer)
+
     #Require Time in terms of full revolutions
-    if T.cons() < (T0.cons()) and M_max > 0:
+    if T_cons < (T0_cons) and M_max > 0:
        _, T_min = compute_T_min(L, M_max, 20, 1e-9) # Min Time to complete a revolution
-       if T.cons() < T_min.cons():        #if Time is less than min time to complete a full revolution it is not a full revolution so subtract 1 
+
+       if isinstance(T_min, DA):
+           T_min_cons = T_min.cons()  #Convert to float for further calculations
+       if isinstance(T_min, float):
+           T_min_cons = T_min
+
+       if T_cons < T_min_cons:        #if Time is less than min time to complete a full revolution it is not a full revolution so subtract 1
             M_max -= 1
 
 
@@ -320,16 +337,16 @@ def householder_iter_DA_nom(x0, p0, f: callable, tol=1e-12, MaxIter=1000):
         dFFdxx = dFdx.deriv(MaxVar)
         dFFFdxxx = dFFdxx.deriv(MaxVar)
 
-        num = dFdx.cons()**2 - F.cons()*dFFdxx.cons()/2
-        denom = (dFdx.cons() * (dFdx.cons()**2 - F.cons()*dFFdxx.cons()) + dFFFdxxx.cons() * F.cons()**2 / 6 )
+        num = dFdx.cons()**2 - (F.cons()*dFFdxx.cons()/2)
+        denom = (dFdx.cons() * (dFdx.cons()**2 - F.cons()*dFFdxx.cons()) + (dFFFdxxx.cons() * F.cons()**2 / 6))
 
         x -= F.cons()*(num/denom)
 
         # CRITICAL: Constrain x to elliptical region for elliptical orbits
-        if x.cons() >= 0.99:  # Prevent x from exceeding ~1 (hyperbolic)
-            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds 0.99, indicating a hyperbolic orbit.")
-        elif x.cons() <= -0.99:  # Prevent extreme negative values
-            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds -0.99, indicating a hyperbolic orbit.")
+        if x.cons() >= 0.999999:  # Prevent x from exceeding ~1 (hyperbolic)
+            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds 0.999999, indicating a hyperbolic orbit.")
+        elif x.cons() <= -0.999999:  # Prevent extreme negative values
+            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds -0.999999, indicating a hyperbolic orbit.")
 
         print(f"Iteration Number: {iter}\n")
         if abs(F.cons()) < tol or iter > MaxIter:
@@ -446,21 +463,39 @@ def initial_guess(T, L, M):
     """
         Generate Initial guess for Single and multi revolution case
     """
+    if isinstance(T, DA):
+        T_cons = T.cons()
+    else:
+        T_cons = T
+
     if M == 0:  #single revolution case
         T00 = op.acos(L) + (L*op.sqrt(1-L**2))      
         T0 = T00 + M  * np.pi
         T1 = 2/3 * (1 - L**3)         #Standard Time parameter if parabolic orbit (Max Energy transfer)
-        if T.cons() >= T0.cons():
+
+        if isinstance(T00, DA):
+            T0_cons = T0.cons()
+            T1_cons = T1.cons()
+        else:
+            T0_cons = T0
+            T1_cons = T1
+
+        if T_cons >= T0_cons:
             x0 = (T0/T)**(2/3) - 1
-        elif T.cons() < T1.cons():
+        elif T_cons < T1_cons:
             x0 = (5/2) * (T1*(T1-T))/(T*(1-L**5)) + 1
-        elif T1.cons() < T.cons() < T0.cons():
+        elif T1_cons < T_cons < T0_cons:
             x0 = (T0/T)**(op.log2(T1/T0)) - 1
         else:
             raise ValueError("Parameterised Time of Flight Parameter does not fall into any of the possible solutiions")
-        
-        return [x0.cons()]
-    
+
+        if x0 is isinstance(x0, DA):
+            x0_cons = x0.cons()
+        if isinstance(x0, float):
+            x0_cons = x0
+            
+        return [x0_cons]
+
     else: #Multiple revolution case Maximum Revolution
         tmp = ((M * np.pi + np.pi) / (8.0 * T)) ** (2.0 / 3.0)
         x_0l = (tmp - 1) / (tmp + 1 )
