@@ -79,7 +79,7 @@ def test_Lamber_Guass_DA():
     print(f"The Poliastro Lambert Solution {v2}")
     print(f"My solution {v2_mine.cons()}")
 
-    assert np.allclose(v2.consI(), v2_mine)
+    assert np.allclose(v2, v2_mine.cons())
 
 
 def DAIOD_Gauss_Lambert_sun():

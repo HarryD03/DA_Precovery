@@ -498,7 +498,7 @@ def initial_guess(T, L, M):
         else:
             raise ValueError("Parameterised Time of Flight Parameter does not fall into any of the possible solutiions")
 
-        if x0 is isinstance(x0, DA):
+        if isinstance(x0, DA):
             x0_cons = x0.cons()
         if isinstance(x0, float):
             x0_cons = x0
