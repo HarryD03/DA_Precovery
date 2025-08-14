@@ -21,7 +21,7 @@ from numpy.typing import NDArray
         householder_iter_DA_Map      - complete
 """
 
-def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float, mu: float, multi_revs, cw=False) -> array:
+def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float, mu: float, multi_revs, prograde=False) -> array:
     """
     Dario Izzo Solution to Lamberts problem (Revisiting Lambert's Problem) as used in Pirovano's Paper.
     Algorithm 1
@@ -59,6 +59,7 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
         assert isinstance(r2_radial_dir, np.ndarray), f"Position 2 must have both NumPy array types"
         
         h_dir  = np.cross(r1_radial_dir, r2_radial_dir)
+        h_dir = h_dir / op.vnorm(h_dir)  #Angular Momentum Vector
         
         if ((r1[0]*r2[1]) - (r1[1]*r2[0])) < 0:
             L = -L
@@ -66,7 +67,7 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
             r2_tangent_dir = np.cross(r2_radial_dir,h_dir)
         else:
             r1_tangent_dir = np.cross(h_dir,r1_radial_dir)
-            r2_tangent_dir = np.cross(h_dir, h_dir)
+            r2_tangent_dir = np.cross(h_dir, r2_radial_dir)
     
     #DaceyPy Branch
     if isinstance(r1_radial_dir[0], DA):
@@ -77,15 +78,14 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
         assert h_dir[2].cons() != 0, f"The Angular Momentum Vector has no z component, impossible to define clock or counterclockwise direction"
         
         if h_dir[2].cons() < 0:         #Transfer angle is larger than 180  degrees as seen from above the z axis
-            L = -L
-            h_dir = - h_dir
-            
-        r1_tangent_dir = h_dir.cross(r1_radial_dir)
-        r2_tangent_dir = h_dir.cross(r2_radial_dir)
-    
-    if cw: #Retrograde motion
-        r1_tangent_dir = -r1_tangent_dir
-        r2_tangent_dir = -r2_tangent_dir
+            L = -L  
+            r1_tangent_dir = r1_radial_dir.cross(h_dir)
+            r2_tangent_dir = r2_radial_dir.cross(h_dir)
+        else:
+            r1_tangent_dir = h_dir.cross(r1_radial_dir)
+            r2_tangent_dir = h_dir.cross(r2_radial_dir)
+
+    L, r1_tangent_dir, r2_tangent_dir = (L, r1_tangent_dir, r2_tangent_dir) if prograde else (-L, -r1_tangent_dir, -r2_tangent_dir)
 
     T = op.sqrt((2*mu)/(s**3))*dt                   #Non-dimensional Time Parameter defined through Izzo
 
@@ -113,13 +113,14 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
             Vt1 = gamma * sigma * (y + L * x) / r1_norm
             Vt2 = gamma * sigma * (y + L * x) / r2_norm
 
-            v1 = Vr1 * r1_radial_dir + Vt1 * r1_tangent_dir
-            v2 = Vr2 * r2_radial_dir + Vt2 * r2_tangent_dir
+            v1 = Vr1 * (r1 / r1_norm) + Vt1 * r1_tangent_dir
+            v2 = Vr2 * (r2 / r2_norm) + Vt2 * r2_tangent_dir
 
             v1 = v1.reshape((3,1))
             v2 = v2.reshape((3,1))
             v1v2 = np.hstack([v1,v2])
-            v1v2 = array(v1v2)
+            if isinstance(x, DA):
+                v1v2 = array(v1v2)
             velocities.append(v1v2)        #Append and reshape to libray standard 
 
     return velocities   #velcoity[0] is (v1,v2) of first direction, velcoity[1] is (v1,v2) of second solution
@@ -164,7 +165,7 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
     T1 = 2/3 * (1 - L**3)         #Standard Time parameter if parabolic orbit (Max Energy transfer)
 
     #Require Time in terms of full revolutions
-    if T_cons < (T0_cons) and M_max > 0:
+    if T_cons < (T00_cons) + M_max* np.pi and M_max > 0:
        _, T_min = compute_T_min(L, M_max, 20, 1e-9) # Min Time to complete a revolution
 
        if isinstance(T_min, DA):
@@ -181,27 +182,35 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
     
     xy = []
     for x_0 in initial_guess(T, L, M):          #This only generates the single revolution case (M == 0) x0 or stated revolution case (M) [x0l,x0r]
-        
-        def f(x,p):
-            """
-            Function to obtain f(x) = T(x) - T* for Householder Iteration scheme
-            """
-            T, L, M = p
-            return x2tof(x, M, L) - T
+        # FLOAT Branch
+        if isinstance(T, float):
+            x = householderfloat(x_0, T, L, M, tol=1e-9, maxiter=20)
+            y = _compute_y(x, L)
+            tmp = [x, y]
+            xy.append(tmp)
 
-        if isinstance(T, DA) and isinstance(L, DA):
-            p0 = [T.cons(), L.cons(), M]  #Parameters for Householder Iteration Scheme
-        else:
-            p0 = [T, L, M]  #Parameters for Householder Iteration Scheme
-        
-        p = [T, L, M]  #Parameters for Householder Iteration Scheme in DA
-        x_nom = householder_iter_DA_nom(x_0, p0, f, tol=1e-12, MaxIter=20)
-        x_DA = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f, tol=1e-12, MaxIter=20)
-        y_DA = op.sqrt(1 + L**2*(x_DA**2-1))
+        # DA BRANCH
+        if isinstance(T, DA):
+            def f(x,p):
+                """
+                Function to obtain f(x) = T(x) - T* for Householder Iteration scheme
+                """
+                T, L, M = p
+                return x2tof(x, M, L) - T
 
-        tmp = [x_DA, y_DA]
-        xy.append(tmp)
+            if isinstance(T, DA) and isinstance(L, DA):
+                p0 = [T.cons(), L.cons(), M]  #Parameters for Householder Iteration Scheme
+            else:
+                p0 = [T, L, M]  #Parameters for Householder Iteration Scheme
+            
+            p = [T, L, M]  #Parameters for Householder Iteration Scheme in DA
+            x_nom = householder_iter_DA_nom(x_0, p0, f, tol=1e-12, MaxIter=20)
+            x_DA = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f, tol=1e-12, MaxIter=20)
+            y_DA = op.sqrt(1 + L**2*(x_DA**2-1))
 
+            tmp = [x_DA, y_DA]
+            xy.append(tmp)
+    
     return xy
 
 
@@ -469,11 +478,10 @@ def initial_guess(T, L, M):
         T_cons = T
 
     if M == 0:  #single revolution case
-        T00 = op.acos(L) + (L*op.sqrt(1-L**2))      
-        T0 = T00 + M  * np.pi
+        T0 = op.acos(L) + (L*op.sqrt(1-L**2)) + M*np.pi
         T1 = 2/3 * (1 - L**3)         #Standard Time parameter if parabolic orbit (Max Energy transfer)
 
-        if isinstance(T00, DA):
+        if isinstance(T0, DA):
             T0_cons = T0.cons()
             T1_cons = T1.cons()
         else:
@@ -485,7 +493,8 @@ def initial_guess(T, L, M):
         elif T_cons < T1_cons:
             x0 = (5/2) * (T1*(T1-T))/(T*(1-L**5)) + 1
         elif T1_cons < T_cons < T0_cons:
-            x0 = (T0/T)**(op.log2(T1/T0)) - 1
+            # Original (wrong Version) = x0 = (T0/T)**(op.log2(T1/T0)) - 1
+            x0 = op.exp(op.log(2) * op.log(T/ T0) / op.log(T1/T0)) - 1
         else:
             raise ValueError("Parameterised Time of Flight Parameter does not fall into any of the possible solutiions")
 
@@ -493,7 +502,7 @@ def initial_guess(T, L, M):
             x0_cons = x0.cons()
         if isinstance(x0, float):
             x0_cons = x0
-            
+
         return [x0_cons]
 
     else: #Multiple revolution case Maximum Revolution
@@ -506,4 +515,110 @@ def initial_guess(T, L, M):
 
 
     
+def householderfloat(p0, T0, ll, M, tol, maxiter):
+    """Find a zero of time of flight equation using the Householder method.
 
+    Notes
+    -----
+    This function is private because it assumes a calling convention specific to
+    this module and is not really reusable.
+
+    """
+    for ii in range(maxiter):
+        y = _compute_y(p0, ll)
+        fval = _tof_equation_y(p0, y, T0, ll, M)
+        T = fval + T0
+        fder = _tof_equation_p(p0, y, T, ll)
+        fder2 = _tof_equation_p2(p0, y, T, fder, ll)
+        fder3 = _tof_equation_p3(p0, y, T, fder, fder2, ll)
+
+        # Householder step (quartic)
+        p = p0 - fval * (
+            (fder**2 - fval * fder2 / 2)
+            / (fder * (fder**2 - fval * fder2) + fder3 * fval**2 / 6)
+        )
+
+        if abs(p - p0) < tol:
+            return p
+        p0 = p
+
+    raise RuntimeError("Failed to converge")
+
+def _compute_y(x, ll):
+    """Computes y."""
+    return np.sqrt(1 - ll**2 * (1 - x**2))
+
+def _tof_equation_p(x, y, T, ll):
+    # TODO: What about derivatives when x approaches 1?
+    return (3 * T * x - 2 + 2 * ll**3 * x / y) / (1 - x**2)
+
+def _tof_equation_p2(x, y, T, dT, ll):
+    return (3 * T + 5 * x * dT + 2 * (1 - ll**2) * ll**3 / y**3) / (
+        1 - x**2
+    )
+
+def _tof_equation_p3(x, y, _, dT, ddT, ll):
+    return (
+        7 * x * ddT + 8 * dT - 6 * (1 - ll**2) * ll**5 * x / y**5
+    ) / (1 - x**2)
+
+def _tof_equation_y(x, y, T0, ll, M):
+    """Time of flight equation with externally computated y."""
+    if M == 0 and np.sqrt(0.6) < x < np.sqrt(1.4):
+        eta = y - ll * x
+        S_1 = (1 - ll - x * eta) * 0.5
+        Q = 4 / 3 * hyp2f1b(S_1)
+        T_ = (eta**3 * Q + 4 * ll * eta) * 0.5
+    else:
+        psi = _compute_psi(x, y, ll)
+        T_ = np.divide(
+            np.divide(psi + M * np.pi, np.sqrt(np.abs(1 - x**2))) - x + ll * y,
+            (1 - x**2),
+        )
+
+    return T_ - T0
+
+def hyp2f1b(x):
+    """Hypergeometric function 2F1(3, 1, 5/2, x), see [Battin].
+
+    .. todo::
+        Add more information about this function
+
+    Notes
+    -----
+    More information about hypergeometric function can be checked at
+    https://en.wikipedia.org/wiki/Hypergeometric_function
+
+    """
+    if x >= 1.0:
+        return np.inf
+    else:
+        res = 1.0
+        term = 1.0
+        ii = 0
+        while True:
+            term = term * (3 + ii) * (1 + ii) / (5 / 2 + ii) * x / (ii + 1)
+            res_old = res
+            res += term
+            if res_old == res:
+                return res
+            ii += 1
+
+def _compute_psi(x, y, ll):
+    """Computes psi.
+
+    "The auxiliary angle psi is computed using Eq.(17) by the appropriate
+    inverse function"
+
+    """
+    if -1 <= x < 1:
+        # Elliptic motion
+        # Use arc cosine to avoid numerical errors
+        return np.arccos(x * y + ll * (1 - x**2))
+    elif x > 1:
+        # Hyperbolic motion
+        # The hyperbolic sine is bijective
+        return np.arcsinh((y - x * ll) * np.sqrt(x**2 - 1))
+    else:
+        # Parabolic motion
+        return 0.0

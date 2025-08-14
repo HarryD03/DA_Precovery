@@ -7,6 +7,7 @@ from daceypy import DA, array
 import daceypy.op as op
 from numpy.typing import NDArray
 from utils.lambert_izzo import lambert_izzo
+from utils.poli_izzo import izzo
 
 def sample_data_Earth():
     """
@@ -41,9 +42,44 @@ def test_Lambert_Guass():
     r1 = r_vec[:, 0]
     r2 = r_vec[:, 1]
     dt = t[1] - t[0]  # Time difference between first two observations
-    velocities = lambert_izzo(r1, r2, dt, mu=3.986e5, multi_revs=0)
+    mu = 3.986e5
 
+    v1, v2 = izzo(mu, r1, r2, dt, 0, prograde=True, lowpath=False, numiter=20, rtol=1e-9)
+    velocities = lambert_izzo(r1, r2, dt, mu=3.986e5, multi_revs=0, prograde=True)
+    solution = velocities[0]
     
+    v2_mine = solution[:,1]
+    print(f"The Gauss Solution {v_2}")
+    print(f"The Poliastro Lambert Solution {v2}")
+    print(f"My solution {v2_mine}")
+
+    assert np.allclose(v2, v2_mine)
+
+def test_Lamber_Guass_DA():
+    _, _, t, _, r_vec, v_2 = sample_data_Earth()
+
+    # Pass Gauss solution into Lambert
+    r1 = r_vec[:, 0]
+    r2 = r_vec[:, 1]
+    dt = t[1] - t[0]  # Time difference between first two observations
+    mu = 3.986e5
+
+    v1, v2 = izzo(mu, r1, r2, dt, 0, prograde=True, lowpath=False, numiter=20, rtol=1e-9)
+
+    DA.init(4,6)
+    r1 = array([r1[i] + DA(i+1) for i in range(3)])
+    r2 = array([r2[i] + DA(i+4) for i in range(3)])
+
+    velocities = lambert_izzo(r1, r2, dt, mu=3.986e5, multi_revs=0, prograde=True)
+
+    solution = velocities[0]
+    
+    v2_mine = solution[:,1]
+    print(f"The Gauss Solution {v_2}")
+    print(f"The Poliastro Lambert Solution {v2}")
+    print(f"My solution {v2_mine.cons()}")
+
+    assert np.allclose(v2.consI(), v2_mine)
 
 
 def DAIOD_Gauss_Lambert_sun():
