@@ -217,6 +217,7 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
 def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
     """
     Generate T(x) function is General form for a given x
+
     :params x: Lancaster/Battin Variablef for Lamberts problem. MUST BE DA
     :params tof: Parameterised Time of Flight Defined it 'Revisiting Lamberts problem'.
     :params M: Revolution Number
@@ -232,7 +233,7 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
     
     if isinstance(x, DA):
         dist = np.abs(x.cons() - 1)
-        rho = np.abs(E.cons())
+        rho = np.abs(E.cons())          #POSSIBLE PROBLEM: NO Higher order DA are preserved
         xx = E.cons()
     
     if isinstance(x, float):
@@ -254,9 +255,13 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
     
     else:                                  #Lancaster formulation performs best in general case
         g = (x*y) - (L*E)
-        if xx < 0:                         #xx is a variable E.cons() dependant on the DA or float nature on E 
-            l = op.acos(g)
+
+        if -1 <= x < 1:                         #xx is a variable E.cons() dependant on the DA or float nature on E 
+            psi = op.acos(g)
             d = M * np.pi + l
+            psi + 
+
+        
         else:
             f = op.sqrt(rho) * (y - L * x)
             log_arg = f + g
@@ -268,30 +273,45 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
             elif log_arg <= 0:
                 raise ValueError(f"Logarithm argument is non-positive: {log_arg}")
             
-        T = (x - L * y - d/op.sqrt(rho)) / E
+        T = (x - L * y - d / op.sqrt(rho)) / E   #written wrong. Do psi funciton and return
+
         return T
     return
 
-def x2tof2(x: DA, M, L):
+def x2tof2(x: Union[DA,float], M, L: Union[DA,float]):
     """
     Obtain the Lagrange Equation for Lamberts problem. Use if large transfer angles
+    
     :params :x Lancaster/Battin's variable for Lamberts Problem [DA].
     :params :M Nnumber of revolutions
     :params :L Lambda defined in "Revisiting Lamberts Problem". L = 1 - chord / semi-perimeter
     :params :T Parametrised Time of Flight as a function of x. T(x) [DA type]
     """
-
     a = 1 / (1 - x**2)      #Expresssion for SMA
-    if a.cons() > 0:
+
+    if isinstance(L, DA):
+        L_cons = L.cons()
+    if isinstance(L, float):
+        L_cons = L
+
+    if isinstance(x, DA):
+        x_cons = x.cons()
+        a_cons = a.cons()
+    if isinstance(x, float):
+        x_cons = x
+        a_cons = a
+    
+    if a_cons > 0:
         alpha = 2.0 * op.acos(x)
         beta = 2.0 * (op.asin(op.sqrt(L**2/a)))
-        if L.cons() < 0.0:         #Chord > semi-perimeter. 
+        if L_cons < 0.0:         #Chord > semi-perimeter. 
             beta = -beta
         T = a**(3/2)*((alpha - op.sin(alpha)) - (beta - op.sin(beta)) + 2*M*np.pi) / 2
+    
     else:   #For the Hyperbolic / parabolic case
         alpha = 2.0 * op.cosh(x)
         beta = 2.0 * op.sinh(op.sqrt(-L * L / a))
-        if L.cons() < 0.0:
+        if L_cons < 0.0:
             beta = -beta
         T = (-a* op.sqrt(-a) * ((op.sinh(alpha) - alpha) - (op.sinh(beta) - beta))/2)
 

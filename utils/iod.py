@@ -158,25 +158,14 @@ def DAIOD_1(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, orde
                          #define posiiton vector for lamber_izzo
         r_vec = range_vec + r_obs_heliocentric
 
-        vel = []
-        for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
-            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=True)
+    
+        #calculate the velocities via lamerts problem 
+        velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, prograde=True)
+        v2_minus = velocities[0][:,1] #unpack solutions 
 
-            #unpack solutions 
-            solution = velocities[0]
-
-            v1 = solution[:,i]
-            v2 = solution[:,i+1]
-
-            print(f"v1: {v1.cons()}\n")                 #debugging purposes
-            print(f"v2: {v2.cons()}\n")                 #debugging purposes
-
-            vel.append(v1)
-            vel.append(v2)
-
+        velocities = lambert_izzo(r_vec[:,1], r_vec[:,2], t_obs_s[2] - t_obs_s[1], mu, 0, prograde=True)
         # Centre posiitons should have zero velocity difference
-        v2_plus = vel[2]                
-        v2_minus = vel[1]
+        v2_plus = velocities[0][:,0] #unpack solutions
 
         DV = (v2_plus - v2_minus)
 
@@ -936,6 +925,9 @@ def newton_nominal_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, N
     DA.pushTO(2)  # Push to the top of the stack for DA variables
 
     while flag:
+        print(f"Iteration: {iter}")
+        if iter == 5:
+            print(f"xp: {xp}")
         F = f(xp, p)
 
 
@@ -962,7 +954,7 @@ def newton_nominal_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, N
             if iter > MaxIter:
                 print(f"Maximum Number of Iterations reached")
                 raise ValueError("No convergence: Relax Tolerance or increase Iterations")
-
+    
         xp = x
     
     x = x.cons()

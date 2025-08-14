@@ -82,13 +82,17 @@ def test_Lamber_Guass_DA():
     assert np.allclose(v2, v2_mine.cons())
 
 
-def DAIOD_Gauss_Lambert_sun():
+def test_DAIOD_1_Gauss_Lambert_Earth():
     """
         Testing Gauss + DAIOD for a Lambert compliant observations (Heliocentric)
     """
-    pass
 
+    range_mag, obs_dir, t, pos_obs, position, v_2 = sample_data_Earth() 
 
+    range_mag_L1 = DAIOD_1(range_mag, obs_dir, t, 4, pos_obs, mu=3.986e5, tol=1e-9)
+
+    print(f"The Guass Range Magnitude:\n{range_mag}")
+    print(f"The Refined Range Magnitude:\n{range_mag_L1}")
 
 def test_DAIOD_case_1():
     """
