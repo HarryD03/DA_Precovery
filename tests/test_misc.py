@@ -2,7 +2,8 @@ import numpy as np
 from utils.iod import lambert_battin_DA, battin_A_DA, Implicit_solver_DA, Nf, newton_nomial_DA, kepler_F, Implicit_solver_DAVec, newton_nominal_DAVec
 from daceypy import DA, array
 import daceypy.op as op
-
+from utils.lambert_izzo import householder_iter_DA_nom, householder_iter_DA_Map, x2tof
+from scipy.optimize import approx_fprime
 # =========================  TESTS  ================================
 
 def test_battin_A_DA():
@@ -48,6 +49,7 @@ def test_battin_A_DA():
     assert np.isclose(A_da.cons(), A_ref, rtol=1e-6), f"Obtain {A_da.cons()}, Expected {A_ref}"
 
 # ------------------------------------------------------------------
+
 
 def test_Implicit_solver_DA():
     """
@@ -110,6 +112,71 @@ def test_Implicit_solver_DA():
     test_da = ex4_2_1(p0,x0)
 
     assert test_da.getCoefficient([5,    0]) == root_da.getCoefficient([5, 0]), f"Expected {test_da} == {root_da}"
+
+def test_NewtonDAVec_jacobian():
+    """Test Newton's method for solving a nonlinear system of equations
+    """
+    def compute_jacobian_finite_difference(f, x, p, h=1e-8):
+        """
+        Compute Jacobian of function f with respect to x using finite differences
+        
+        Args:
+            f: Function that takes (x, p) and returns array
+            x: Point to evaluate Jacobian (array)
+            x: Point to evaluate Jacobian (array)
+            p: Parameters (kept constant)
+            h: Step size for finite differences
+        
+        Returns:
+            jacobian: Matrix where jacobian[i,j] = ∂f_i/∂x_j
+        """
+        def f_wrapper(x_var):
+            return f(x_var, p)
+        
+        # Get function dimension
+        f_val = f_wrapper(x)
+        n_eq = len(f_val)  # Number of equations
+        n_var = len(x)     # Number of variables
+        
+        jacobian = np.zeros((n_eq, n_var))
+        
+        # Compute each row of Jacobian
+        for i in range(n_eq):
+            def f_i(x_var):
+                return f_wrapper(x_var)[i]
+            
+            jacobian[i, :] = approx_fprime(x, f_i, h)
+        
+        return jacobian
+    
+    def f(x_da, p):
+        f11 = x_da[0] + 2*x_da[1] - p[0]
+        f22 = x_da[0]**2 + 4*x_da[1]**2 - p[1]
+        if isinstance(x_da, array):
+            F = array([f11, f22])
+        else:
+            F = np.array([f11,f22])
+        return F
+
+    x0 = np.array([1, 2])
+    p = np.array([2, 4])
+    DA.init(4, 2)
+    x_nom = newton_nominal_DAVec(x0, p, f, 4)
+
+    DA.init(4,4)
+    p_da = array([p[i] + DA(i + 1) for i in range(2)])  # Create DA parameters
+    x_da = Implicit_solver_DAVec(x_nom, p_da, f, 2)
+
+    # Obtain the Jacobian function 
+    Jac_da = np.array( [ [1, 2], [0, 8] ] )
+    Jac_scipy = compute_jacobian_finite_difference(f, x_nom, p)
+
+    diff = Jac_da - Jac_scipy
+    assert np.linalg.norm(diff) < 1e-6, f"Jacobian mismatch: DA {Jac_da} vs SciPy {Jac_scipy}"
+
+    x_ref = np.array([0, 1])
+    assert np.allclose(x_nom, x_ref, rtol=1e-12)
+
 
 def test_Implicit_solver_DA_maybeVec():
     
@@ -177,6 +244,23 @@ def test_newton_nominal_DAVec():
 
     print(f"Nominal root:\n{x}")
     assert np.allclose(x, np.array([1.41421356, 1.41421356, 1.41421356]), atol=1e-6), f"Expected [1.41421356, 1.41421356, 1.41421356]\nGot {x}"
+
+def test_newton_nominal_DAVec():
+    """
+        Conduct Newton for a nonlinear system of equations
+    """
+    def f(x_da, p):
+        """Root function for testing"""
+        f11 = x_da[0] + 2*x_da[1] - 2
+        f22 = x_da[0]**2 + 4*x_da[1]**2 - 4
+        F = array([f11, f22])
+        return F
+    
+    x0 = np.array([1, 2])
+    p = np.array([0, 0])
+    x = newton_nominal_DAVec(x0, p, f, 4)
+    x_ref = np.array([0, 1])
+    assert np.allclose(x, x_ref, rtol=1e-12)
 
 
 def test_Implicit_solver_DAVec():

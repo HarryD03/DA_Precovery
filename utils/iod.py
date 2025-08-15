@@ -152,9 +152,8 @@ def DAIOD_1(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, orde
         root of the velocity difference.
         """
         range_mag =  x + p                          #range_mag = Nominal + Perturbation
-
-        range_vec = range_mag * i_rho
         
+        range_vec = range_mag * i_rho
                          #define posiiton vector for lamber_izzo
         r_vec = range_vec + r_obs_heliocentric
 
@@ -167,19 +166,142 @@ def DAIOD_1(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, orde
         # Centre posiitons should have zero velocity difference
         v2_plus = velocities[0][:,0] #unpack solutions
 
-        DV = (v2_plus - v2_minus)
+        DV = (v2_minus - v2_plus)
+
+        return DV                                      #DV = [dv_i, dv_j, dv_k] + M(dranges)
+
+    assert(isinstance(range_mag_guass, np.ndarray)), "Guass Range must be in Floats"
+    
+    p0 = np.zeros_like(range_mag_guass) 
+    assert order >= 4, "Order must be 4 for the Householder Iteration to work" 
+
+    DA.init(order, 3)                                      
+    range_mag_L1 = newton_nominal_DAVec(range_mag_guass, p0, f, order, tol, 100)      #Obtain Range so that f(Range(0)) = 0
+    
+    DA.init(order, 6)
+    p = array([p0[i] + DA(i+1) for i in range(len(range_mag_guass))])          #Define Range polynmoinal map
+
+    range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, 3)
+
+    return range_mag_L1        #DA output
+
+def DAIOD_1_debugSciPy(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11, tol: float=1e-9):
+
+    def f(x, p):                                      #deltV = residual + M(dranges)
+
+        """
+        f(range_vec) returns the velocity difference between the second and first velocity estimates
+        for the central observation. The velocity difference is calculated by first calculating the
+        positions of the observations using the range vector and the observer position. The positions
+        are then used to calculate the velocities between each observation via the Izzo solution to
+        Lambert's problem. The velocity difference is then calculated as the difference between the
+        second and first velocity estimates. This function is used in the Newton method to find the
+        root of the velocity difference.
+        """
+        range_mag =  x + p                          #range_mag = Nominal + Perturbation
+        
+        range_vec = range_mag * i_rho
+                         #define posiiton vector for lamber_izzo
+        r_vec = range_vec + r_obs_heliocentric
+
+    
+        #calculate the velocities via lamerts problem 
+        velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, prograde=True)
+        v2_minus = velocities[0][:,1] #unpack solutions 
+
+        velocities = lambert_izzo(r_vec[:,1], r_vec[:,2], t_obs_s[2] - t_obs_s[1], mu, 0, prograde=True)
+        # Centre posiitons should have zero velocity difference
+        v2_plus = velocities[0][:,0] #unpack solutions
+
+        DV = (v2_minus - v2_plus)
+
+        return DV                                      #DV = [dv_i, dv_j, dv_k] + M(dranges)
+
+    assert(isinstance(range_mag_guass, np.ndarray)), "Guass Range must be in Floats"
+    
+    p0 = np.zeros_like(range_mag_guass) 
+    assert order >= 4, "Order must be 4 for the Householder Iteration to work"                                       
+    
+    range_mag_L1 = newton_nominal_DAVec(range_mag_guass, p0, f, order, tol, 100)      #Obtain Range so that f(Range(0)) = 0
+    
+    DA.init(order, 6)
+    p = array([p0[i] + DA(i+1) for i in range(len(range_mag_guass))])          #Define Range polynmoinal map
+
+    range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, 3)
+
+    return range_mag_L1        #DA output
+
+def DAIOD_1Scipy(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11, tol: float=1e-9):
+    """
+        Part 1 of the DAIOD Algorithm: Define the ranges such that DV(range_mag(p)) = 0
+
+        :param range_mag_guass: Range magnitude. See Guass_8th_seed() [km]
+        :param i_rho: Line of sight unit vector. See create_da_los_vectors() [-]
+        :param t_obs_s: The time of the observation. [s]
+        :param r_obs_heliocentric: Position of the observer. Assumed heliocentric plane, centre of Earth.  [km]
+        :param mu: The standard gravitational parameter. Assumed Sun Orbiting [km^3/s^2]
+        :param tol: The tolerance for the Newton method. [km]
+
+        :return range_mag_L1: Range Taylor Polynomial Map. range_mag_L1 + variations  [km]
+    """
+
+    def f(x, p):                                      #deltV = residual + M(dranges)
+
+        """
+        f(range_vec) returns the velocity difference between the second and first velocity estimates
+        for the central observation. The velocity difference is calculated by first calculating the
+        positions of the observations using the range vector and the observer position. The positions
+        are then used to calculate the velocities between each observation via the Izzo solution to
+        Lambert's problem. The velocity difference is then calculated as the difference between the
+        second and first velocity estimates. This function is used in the Newton method to find the
+        root of the velocity difference.
+        """
+        range_mag =  x + p                          #range_mag = Nominal + Perturbation
+        
+        range_vec = range_mag * i_rho
+                         #define posiiton vector for lamber_izzo
+        r_vec = range_vec + r_obs_heliocentric
+
+    
+        #calculate the velocities via lamerts problem 
+        velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, prograde=True)
+        v2_minus = velocities[0][:,1] #unpack solutions 
+
+        velocities = lambert_izzo(r_vec[:,1], r_vec[:,2], t_obs_s[2] - t_obs_s[1], mu, 0, prograde=True)
+        # Centre posiitons should have zero velocity difference
+        v2_plus = velocities[0][:,0] #unpack solutions
+
+        DV = (v2_minus - v2_plus)
 
         return DV                           #DV = [dv_i, dv_j, dv_k] + M(dranges)
     
     assert(isinstance(range_mag_guass, np.ndarray)), "Guass Range must be in Floats"
     
-    p0 = np.zeros_like(range_mag_guass)                                        
-    range_mag_L1 = newton_nominal_DAVec(range_mag_guass, p0, f, order, tol, 100)      #Obtain Range so that f(Range(0)) = 0
+    # Create a wrapper function for scipy.optimize.fsolve (takes only x as input)
+    def f_scipy(x):
+        """Wrapper function for scipy that takes only x as input"""
+        p_zero = np.zeros_like(x)
+        result = f(x, p_zero)
+        return result.cons() if hasattr(result, 'cons') else result
     
-    DA.init(order, 6)
-    p = array([p0[i] + DA(i+1) for i in range(len(range_mag_guass))])          #Define Range polynmoinal map
-    range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, order, tol, 100)
+    # Use scipy.optimize.fsolve for robust root finding
+    from scipy.optimize import fsolve
+    
+    print(f"Initial guess for fsolve: {range_mag_guass}")
 
+    range_mag_L1 = fsolve(f_scipy, range_mag_guass, xtol=tol)
+    print(f"fsolve converged to: {range_mag_L1}")
+        
+    # Convert to DA array to maintain compatibility with rest of code
+    DA.init(order, 6)
+    p0 = np.zeros_like(range_mag_guass)
+        # Create DA array from the solved nominal values
+
+    p0 = np.zeros_like(range_mag_guass)  # Define p0 for the DA part
+    p = array([p0[i] + DA(i+1) for i in range(len(range_mag_guass))])          #Define Range polynmoinal map
+    
+    range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, 3)
+    
     return range_mag_L1        #DA output
 
 
@@ -698,7 +820,7 @@ def Nf(x, f, df):
     #f is the callable function
     #df is the inverse Jacobian of f wrt x
     
-    if isinstance(x,array) and isinstance(df, array):      #DAIOD case (Csnt Jacobian)
+    if isinstance(x,array) and df.dtype == np.float64:      #DAIOD case (Csnt Jacobian)
         k = DA.getMaxVariables()
         f = f.plug(k,0)
         df = df.plug(k,0)
@@ -755,7 +877,7 @@ def Implicit_solver_DA(x_da: Union[float,DA], p, f: callable):
 
         return x_da
 
-def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables, x0DA=True, DAIOD=False, JacDAIOD=0):
+def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables, x0DA=False, DAIOD=False, JacDAIOD=0):
     """
     Conduct the Implicit Solver (Newton Iteration) for multi-variables inputs.
     params: x_da: array of initial variables
@@ -856,6 +978,7 @@ def lagrange_coefficients(a: Union[float, DA], dE: Union[float, DA], r1: Union[a
         return r2, v2
 
 def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArray], f: callable, tol: float , MaxIter: float, order) -> float:
+    
     """
     Newtons Method applied to DA to obtain Nomial Solution for dependant variable
     DA must have been initialised Prior
@@ -865,7 +988,7 @@ def newton_nomial_DA(x0: Union[float, NDArray], p: Union[DA, array, float, NDArr
     :parma f: Callable function f(x; p) = 0 which will be evaluated at every newton iteration
     :return: solution for x around the nominal p such that f(x) = 0
     """
-    DA.init(order,1)
+
     Max_variable = DA.getMaxVariables()
     
     xp = x0 + DA(Max_variable)  
@@ -912,6 +1035,7 @@ def newton_nominal_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, N
     :return: Nomial solution for x as a Taylor Polynomial series 
     """
     NumVariables = len(x0)
+    
     DA.init(order, NumVariables)
     k = DA.getMaxVariables() - NumVariables + 1
     
@@ -922,34 +1046,20 @@ def newton_nominal_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, N
     flag = True
     iter = 1
 
-    DA.pushTO(2)  # Push to the top of the stack for DA variables
-
     while flag:
         print(f"Iteration: {iter}")
         if iter == 5:
             print(f"xp: {xp}")
         F = f(xp, p)
 
-
-        #Jac = np.zeros((NumVariables,NumVariables), dtype=object)
-        #for i in range(NumVariables):
-        #    for j in range(NumVariables):
-        #        Jac[i][j] = F[i].deriv(k+j)
-        
-        #Jac = array(Jac)
         Jac = F.linear()  # Get the linear part of the function F
-
-        #for i in range(NumVariables):
-        #    F[i] = F[i].plug(k+i, 0)
-        #    for j in range(NumVariables):
-        #        Jac[i][j] = Jac[i][j].plug(k+i, 0)
 
         assert np.linalg.det(Jac) != 0, "Jacobian is singular, therefore invertable"
 
         x = xp - (np.linalg.inv(Jac) @ F.cons())
-        iter += 1
 
-        if np.all(np.abs(F.cons()) < tol) or iter > MaxIter:  # Check convergence
+        iter += 1
+        if np.linalg.norm(F.cons()) < tol or iter > MaxIter:  # Check convergence
             flag = False
             if iter > MaxIter:
                 print(f"Maximum Number of Iterations reached")
@@ -957,9 +1067,10 @@ def newton_nominal_DAVec(x0: Union[float, NDArray], p: Union[DA, array, float, N
     
         xp = x
     
-    x = x.cons()
+    xp = xp.cons()
     DA.popTO()  # Pop the top of the stack for DA variables
-    return x
+    return xp
+
 def kepler_F(a: Union[float, DA], sigma: Union[float, DA], r1_norm: Union[float, DA], dM: Union[float, DA]) -> Union[float, DA]:
     """
     Kepler's equation F(dE) = dE + (sigma/sqrt(a)) * (1 - cos(dE) - (1- r1/a)*sin(dE))

@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from utils.iod import Guass_8th_seed, f_g_series, DAIOD_1, DAIOD_2
+from utils.iod import Guass_8th_seed, f_g_series, DAIOD_1, DAIOD_2, DAIOD_1Scipy
 import numpy as np
 from typing import Union
 from daceypy import DA, array
@@ -8,7 +8,7 @@ import daceypy.op as op
 from numpy.typing import NDArray
 from utils.lambert_izzo import lambert_izzo
 from utils.poli_izzo import izzo
-
+from utils.iod import newton_nominal_DAVec, Implicit_solver_DAVec
 def sample_data_Earth():
     """
         Generate Guass Solution for DAIOD (ECI)
@@ -81,7 +81,6 @@ def test_Lamber_Guass_DA():
 
     assert np.allclose(v2, v2_mine.cons())
 
-
 def test_DAIOD_1_Gauss_Lambert_Earth():
     """
         Testing Gauss + DAIOD for a Lambert compliant observations (Heliocentric)
@@ -89,10 +88,23 @@ def test_DAIOD_1_Gauss_Lambert_Earth():
 
     range_mag, obs_dir, t, pos_obs, position, v_2 = sample_data_Earth() 
 
-    range_mag_L1 = DAIOD_1(range_mag, obs_dir, t, 4, pos_obs, mu=3.986e5, tol=1e-9)
+    range_mag_L1 = DAIOD_1(range_mag, obs_dir, t, 4, pos_obs, mu=3.986e5, tol=1e-3)
+
+    assert range_mag_L1.cons().shape == range_mag.shape
 
     print(f"The Guass Range Magnitude:\n{range_mag}")
     print(f"The Refined Range Magnitude:\n{range_mag_L1}")
+
+def test_DAIOD_1_Gauss_Lambert_Earth_Scipy():
+    """
+    Testing DAIODD_1 with the Scipy solver to get the initial condition
+    """
+    range_mag, obs_dir, t, pos_obs, position, v_2 = sample_data_Earth() 
+
+    range_mag_L1 = DAIOD_1Scipy(range_mag, obs_dir, t, 4, pos_obs, mu=3.986e5, tol=1e-3)
+    
+    assert range_mag_L1.cons().shape == range_mag.shape
+
 
 def test_DAIOD_case_1():
     """

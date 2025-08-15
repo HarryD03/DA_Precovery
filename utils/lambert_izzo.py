@@ -166,7 +166,7 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
 
     #Require Time in terms of full revolutions
     if T_cons < (T00_cons) + M_max* np.pi and M_max > 0:
-       _, T_min = compute_T_min(L, M_max, 20, 1e-9) # Min Time to complete a revolution
+       _, T_min = compute_T_min(L, M_max, 1000, 1e-9) # Min Time to complete a revolution
 
        if isinstance(T_min, DA):
            T_min_cons = T_min.cons()  #Convert to float for further calculations
@@ -184,7 +184,7 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
     for x_0 in initial_guess(T, L, M):          #This only generates the single revolution case (M == 0) x0 or stated revolution case (M) [x0l,x0r]
         # FLOAT Branch
         if isinstance(T, float):
-            x = householderfloat(x_0, T, L, M, tol=1e-9, maxiter=20)
+            x = householderfloat(x_0, T, L, M, tol=1e-9, maxiter=100)
             y = _compute_y(x, L)
             tmp = [x, y]
             xy.append(tmp)
@@ -204,8 +204,12 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
                 p0 = [T, L, M]  #Parameters for Householder Iteration Scheme
             
             p = [T, L, M]  #Parameters for Householder Iteration Scheme in DA
-            x_nom = householder_iter_DA_nom(x_0, p0, f, tol=1e-12, MaxIter=20)
-            x_DA = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f, tol=1e-12, MaxIter=20)
+            import pickle
+            with open('householder_params.pkl', 'wb') as P:
+                pickle.dump(p, P)
+
+            x_nom = householder_iter_DA_nom(x_0, p0, f, tol=1e-12, MaxIter=100)
+            x_DA = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f, tol=1e-12, MaxIter=100)
             y_DA = op.sqrt(1 + L**2*(x_DA**2-1))
 
             tmp = [x_DA, y_DA]
@@ -229,18 +233,41 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
     
     K = L**2
     E = x**2 - 1
-    y = op.sqrt(1 + K * E)
+    y = op.sqrt( 1 - L**2 * (1 - x**2))
     
     if isinstance(x, DA):
         dist = np.abs(x.cons() - 1)
         rho = np.abs(E.cons())          #POSSIBLE PROBLEM: NO Higher order DA are preserved
         xx = E.cons()
+        x_cons = x.cons()
     
     if isinstance(x, float):
         dist = np.abs(x - 1)
         rho = abs(E)
         xx  = E
+        x_cons = x
 
+    if M == 0 and np.sqrt(0.6) < x_cons < np.sqrt(1.4):
+        eta = y - L * x
+        S1 = 0.5 * (1.0 - L - x * eta)
+        Q = hypergeometricF(S1, 1e-11)      
+        Q = 4/3 * Q
+        T = (eta**3 * Q + 4*L*eta) / 2 + M*np.pi/(rho*(3/2))
+        return T
+    
+    else: 
+        psi = compute_psi(x, y, L)
+        
+
+        if -1 < x_cons < 1:  # Elliptical case: 1 - x**2 > 0
+            sqrt_term = op.sqrt(1 - x**2)
+        else:  # Hyperbolic case: 1 - x**2 < 0, so we need sqrt(|1 - x**2|) = sqrt(x**2 - 1)
+            sqrt_term = op.sqrt(x**2 - 1)
+            
+        T = ((psi + M * np.pi) / sqrt_term - x + L*y) / (1 - x**2)
+
+        return T
+    ### Old version
     if dist < lagrange and dist > battin: #Use Lagrange Tof Expression for Low energy transfers (x ->)
         T = x2tof2(x, M, L)
         return T
@@ -257,10 +284,8 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
         g = (x*y) - (L*E)
 
         if -1 <= x < 1:                         #xx is a variable E.cons() dependant on the DA or float nature on E 
-            psi = op.acos(g)
+            l = op.acos(g)
             d = M * np.pi + l
-            psi + 
-
         
         else:
             f = op.sqrt(rho) * (y - L * x)
@@ -343,7 +368,7 @@ def hypergeometricF(S1, tol=1e-11):
 
     return Sj 
 
-def householder_iter_DA_nom(x0, p0, f: callable, tol=1e-12, MaxIter=1000):
+def householder_iter_DA_nom(x0, p0, f: callable, tol=1e-12, MaxIter=100):
     """
     Complete Household Iteration Scheme for root finding of implicit equation
     DA Reliant
@@ -366,16 +391,27 @@ def householder_iter_DA_nom(x0, p0, f: callable, tol=1e-12, MaxIter=1000):
         dFFdxx = dFdx.deriv(MaxVar)
         dFFFdxxx = dFFdxx.deriv(MaxVar)
 
+        # DEBUG: Check higher order terms
+        print(f"Householder Debug - Iter {iter}:")
+        print(f"  F.cons() = {F.cons()}")
+        print(f"  dFdx.cons() = {dFdx.cons()}")
+        print(f"  dFFdxx.cons() = {dFFdxx.cons()}")
+        print(f"  dFFFdxxx.cons() = {dFFFdxxx.cons()}")
+
         num = dFdx.cons()**2 - (F.cons()*dFFdxx.cons()/2)
         denom = (dFdx.cons() * (dFdx.cons()**2 - F.cons()*dFFdxx.cons()) + (dFFFdxxx.cons() * F.cons()**2 / 6))
+        
+        print(f"  num = {num}")
+        print(f"  denom = {denom}")
+        print(f"  step = {F.cons()*(num/denom)}")
 
         x -= F.cons()*(num/denom)
 
         # CRITICAL: Constrain x to elliptical region for elliptical orbits
-        if x.cons() >= 0.999999:  # Prevent x from exceeding ~1 (hyperbolic)
-            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds 0.999999, indicating a hyperbolic orbit.")
-        elif x.cons() <= -0.999999:  # Prevent extreme negative values
-            raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds -0.999999, indicating a hyperbolic orbit.")
+        #if x.cons() >= 0.999999:  # Prevent x from exceeding ~1 (hyperbolic)
+        #    raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds 0.999999, indicating a hyperbolic orbit.")
+        #elif x.cons() <= -0.999999:  # Prevent extreme negative values
+        #    raise ValueError(f"Convergence failed: x_new = {x.cons()} exceeds -0.999999, indicating a hyperbolic orbit.")
 
         print(f"Iteration Number: {iter}\n")
         if abs(F.cons()) < tol or iter > MaxIter:
@@ -386,7 +422,7 @@ def householder_iter_DA_nom(x0, p0, f: callable, tol=1e-12, MaxIter=1000):
     DA.popTO()
     return x.cons()
 
-def householder_iter_DA_Map(x_nom: DA, p: DA, MaxVar: int, f: callable, tol=1e-12, MaxIter=30):
+def householder_iter_DA_Map(x_nom: DA, p: DA, MaxVar: int, f: callable, tol=1e-12, MaxIter=100):
     """
     Implicit Equation solver for Household Iteration Algorithm. Given a Nomial (constant) value of x, x_nom, express the DA part in terms of the independant
     DA variables. i.e. [x] = x_nom + DA_MAP(del_p) for f(x;p) = x**2 - p. This gives a locally explicit equation (x) for various values of p around the nomial value p  
@@ -427,7 +463,7 @@ def householder_iter_DA_Map(x_nom: DA, p: DA, MaxVar: int, f: callable, tol=1e-1
         
         print(f"Iteration Number: {iter}\n")    #For de-bugging purposes
 
-        if iter > MaxIter:
+        if iter > MaxIter or np.linalg.norm(x.linear() - xp.linear()) < tol:        # linear as zeroth order should be the same.
             print("Convergence Achieved")
             flag=False
             break
@@ -533,7 +569,26 @@ def initial_guess(T, L, M):
 
         return [x_0l.cons(), x_0r.cons()]
 
+def compute_psi(x, y, L):
+    """Computes psi.
 
+    "The auxiliary angle psi is computed using Eq.(17) by the appropriate
+    inverse function"
+
+    """
+    #DA checker
+    if isinstance(x, float):
+        x_cons = x
+    if isinstance(x,DA):
+        x_cons = x.cons()
+
+    if -1 <= x_cons < 1:
+        # Elliptic Motion
+        return op.acos(x*y + L * (1 - x**2))
+    elif x_cons > 1: # hyperbolic
+        return op.asinh((y - x * L) * op.sqrt(x**2 -L))
+    else: #parabolic
+        return 0.0 
     
 def householderfloat(p0, T0, ll, M, tol, maxiter):
     """Find a zero of time of flight equation using the Householder method.

@@ -3,7 +3,7 @@ import pytest
 from utils.lambert_izzo import lambert_izzo, findxy, x2tof, x2tof2, hypergeometricF, householder_iter_DA_nom, householder_iter_DA_Map
 from utils.iod import newton_nomial_DA, Implicit_solver_DA
 from poliastro.iod import izzo
-from poliastro.core.iod import _find_xy, _tof_equation, _householder
+from poliastro.core.iod import _find_xy, _tof_equation, _householder, izzo
 from astropy import units as u
 from poliastro.bodies import Earth
 from astropy.tests.helper import assert_quantity_allclose
@@ -12,19 +12,21 @@ from poliastro._math.special import hyp2f1b, stumpff_c2
 from daceypy import DA, array
 import daceypy.op as op
 
-# Example geometry from Vallado Example 5.2
-R1 = np.array([15945.34, 0.0, 0.0])
-R2 = np.array([12214.83399, 10249.46731, 0.0])
-DT = 76 * 60
-MU = 3.986e5
+def sample_data():
+    # Example geometry from Vallado Example 5.2
+    R1 = np.array([15945.34, 0.0, 0.0])
+    R2 = np.array([12214.83399, 10249.46731, 0.0])
+    DT = 76 * 60
+    MU = 3.986e5
 
-k = Earth.k
-r0 = [15945.34, 0.0, 0.0] * u.km
-r = [12214.83399, 10249.46731, 0.0] * u.km
-tof = 76.0 * u.min
+    k = Earth.k
+    r0 = [15945.34, 0.0, 0.0] * u.km
+    r = [12214.83399, 10249.46731, 0.0] * u.km
+    tof = 76.0 * u.min
 
-V1_REF = np.array([2.058925, 2.915965, 0.0])
-V2_REF = np.array([-3.451565, 0.910315, 0.0])
+    V1_REF = np.array([2.058925, 2.915965, 0.0])
+    V2_REF = np.array([-3.451565, 0.910315, 0.0])
+    return R1, R2, DT, MU, V1_REF, V2_REF
 
 def _compute_LT(r1, r2, dt, mu):
     c_vec = r2 - r1
@@ -37,11 +39,12 @@ def _compute_LT(r1, r2, dt, mu):
     T = op.sqrt((2 * mu) / (s ** 3)) * dt
     return L, T, s
 
-@pytest.mark.parametrize("lambert", [izzo.lambert])
-def test_lambert_izzo_prograde_ShortARC(lambert):
+@pytest.mark.basic
+def test_lambert_izzo_prograde_ShortARC():
     """Compare against reference Vallado velocities for single revolution.
         NOTE: We do -(Variable) in DA. This means the taylor coefficents in DA change and effectly mirror the nomimal solution and the distrubution
         """
+    R1, R2, DT, MU, V1_REF, V2_REF = sample_data()
     NVar = len(R1) + len(R2)
     DA.init(4, NVar + 1)
     
@@ -50,9 +53,11 @@ def test_lambert_izzo_prograde_ShortARC(lambert):
     R1_DA = array([R1[i] + DA(i+1) for i in range(3)])
     R2_DA = array([R2[i] + DA(i+4) for i in range(3)])
     M = 0
-    
-    velocities = lambert_izzo(R1_DA, R2_DA, DT, MU, M)
+    R1 = R1_DA.cons()
+    R2 = R2_DA.cons()
 
+    velocities = lambert_izzo(R1_DA, R2_DA, DT, MU, M, prograde=True)
+    v_1, v_2 = izzo(MU, R1, R2, DT, M, prograde=True, lowpath=False, numiter=30, rtol=1e-9)
 
     solution1 = velocities[0]
 
@@ -61,6 +66,93 @@ def test_lambert_izzo_prograde_ShortARC(lambert):
 
     print(f"My Lambert v2: {v2.cons()}\n")
     print(f"Expected v2: {V2_REF}")
+
+    #Compare the Jacobian terms of velocity
+    def jacobian_scipy():
+        print("\n=== JACOBIAN COMPARISON ===")
+        
+        # Extract DA Jacobians from my implementation
+        # v1 and v2 are DA objects with derivatives w.r.t. R1 and R2 components
+        print("DA Jacobian for v1 (∂v1/∂R1, ∂v1/∂R2):")
+        v1_jacobian_da = np.zeros((3, 6))  # 3 velocity components, 6 position components
+        for i in range(3):  # v1 components (x, y, z)
+            for j in range(6):  # R1 and R2 components (3+3)
+                v1_jacobian_da[i, j] = v1[i].deriv(j+1).cons()
+        print(v1_jacobian_da)
+        
+        print("\nDA Jacobian for v2 (∂v2/∂R1, ∂v2/∂R2):")
+        v2_jacobian_da = np.zeros((3, 6))
+        for i in range(3):  # v2 components (x, y, z)
+            for j in range(6):  # R1 and R2 components (3+3)
+                v2_jacobian_da[i, j] = v2[i].deriv(j+1).cons()
+        print(v2_jacobian_da)
+        
+        # Compute finite difference Jacobian for reference
+        from scipy.optimize import approx_fprime
+        
+        def izzo_wrapper(positions):
+            """Wrapper for izzo function to compute finite difference Jacobian"""
+            r1_fd = positions[:3]
+            r2_fd = positions[3:6]
+            v1_fd, v2_fd = izzo(MU, r1_fd, r2_fd, DT, M, prograde=True, lowpath=False, numiter=30, rtol=1e-9)
+            return np.concatenate([v1_fd, v2_fd])  # Return [v1x, v1y, v1z, v2x, v2y, v2z]
+        
+        # Current position vector [R1x, R1y, R1z, R2x, R2y, R2z]
+        pos_vector = np.concatenate([R1, R2])
+        
+        # Compute finite difference Jacobian
+        h = 1e-6  # Step size
+        jac_fd = np.zeros((6, 6))  # 6 velocity components, 6 position components
+        for j in range(6):
+            def func_j(pos):
+                return izzo_wrapper(pos)[j]
+            jac_fd[j, :] = approx_fprime(pos_vector, func_j, h)
+        
+        print("\nFinite Difference Jacobian (reference):")
+        print("∂[v1, v2]/∂[R1, R2] =")
+        print(jac_fd)
+        
+        # Split into v1 and v2 parts for comparison
+        v1_jacobian_fd = jac_fd[:3, :]  # First 3 rows (v1)
+        v2_jacobian_fd = jac_fd[3:, :]  # Last 3 rows (v2)
+        
+        print("\nFD Jacobian for v1:")
+        print(v1_jacobian_fd)
+        print("\nFD Jacobian for v2:")
+        print(v2_jacobian_fd)
+
+        return v1_jacobian_fd, v2_jacobian_fd, v1_jacobian_da, v2_jacobian_da
+    
+    v1_jacobian_fd, v2_jacobian_fd, v1_jacobian_da, v2_jacobian_da = jacobian_scipy()
+    # Compare Jacobians
+    v1_jac_error = np.abs(v1_jacobian_da - v1_jacobian_fd)
+    v2_jac_error = np.abs(v2_jacobian_da - v2_jacobian_fd)
+    
+    max_v1_error = np.max(v1_jac_error)
+    max_v2_error = np.max(v2_jac_error)
+    
+    print(f"\nJacobian Comparison:")
+    print(f"Norm error in ∂v1/∂[R1,R2]: {np.linalg.norm(v1_jac_error)}")
+    print(f"Norm error in ∂v2/∂[R1,R2]: {np.linalg.norm(v2_jac_error)}")
+
+    # Check if Jacobians match within tolerance
+    jac_tolerance = 1e-8  # Relaxed tolerance for numerical derivatives
+    v1_jac_match = max_v1_error < jac_tolerance
+    v2_jac_match = max_v2_error < jac_tolerance
+
+    assert v1_jac_match, f"v1 Jacobian matches (tol={jac_tolerance}): {v1_jac_match}"
+    assert v2_jac_match, f"v2 Jacobian matches (tol={jac_tolerance}): {v2_jac_match}"
+
+    if not (v1_jac_match and v2_jac_match):
+        print("❌ DA Jacobians don't match finite differences!")
+        print("This suggests issues with DA automatic differentiation in Lambert solver")
+    else:
+        print("✅ DA Jacobians match finite differences")
+    
+    # Optionally assert on Jacobian accuracy (comment out if you expect failures)
+    # assert v1_jac_match, f"v1 Jacobian error {max_v1_error:.2e} exceeds tolerance {jac_tolerance:.1e}"
+    # assert v2_jac_match, f"v2 Jacobian error {max_v2_error:.2e} exceeds tolerance {jac_tolerance:.1e}"
+
 
     assert np.allclose(v1.cons(), V1_REF, rtol=1e-5)
     assert np.allclose(v2.cons(), V2_REF, rtol=1e-5)
