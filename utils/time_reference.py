@@ -173,10 +173,11 @@ def create_da_los_vectors(ra: Union[array, NDArray], dec: Union[array, NDArray])
     assert ra.shape == dec.shape, "Number of RA and DEC observations must match"
 
     num_obs = len(ra)
-    los_vectors = np.empty((3, num_obs), dtype=object)
 
     #DA section
     if isinstance(ra, array):
+        
+        los_vectors = np.empty((3, num_obs), dtype=object)
         for i in range(num_obs):
             los_vectors[:,i] = array([
                 op.cos(dec[i]) * op.cos(ra[i]),
@@ -185,7 +186,9 @@ def create_da_los_vectors(ra: Union[array, NDArray], dec: Union[array, NDArray])
                 ])
 
     #ndarray Section
-    if isinstance(ra[0],float):
+    elif isinstance(ra[0],float):
+    
+        los_vectors = np.empty((3, num_obs), dtype=float)
         for i in range(num_obs):
             los_vectors[:,i] = np.array([
                 op.cos(dec[i]) * op.cos(ra[i]),
@@ -208,6 +211,12 @@ def get_earth_ephemeris(years, months, days, uts):
     return earth_ephemeris
 
 # ------------------- Coordinate Transformations -----------------------------
+def ECI2Topo():
+    """
+    Equatorial ECI to Topocentric Conversion (RA, DEC, Range, RA_dot, DEC_dot, Range_dot) -> (RA, DEC, Range, RA_dot, DEC_dot, Range_dot)
+    :params
+    """
+
 
 def CC2MEE(r: Union[NDArray, array], v: Union[NDArray, array], mu) -> Union[array, NDArray]:
     """
@@ -466,62 +475,71 @@ def ROT3(x):
 def CC2obs(X: Union[array, NDArray]) -> Union[array, NDArray]:
     """
     Function for converting Right Ascension, Declination and Range coordinates to Cartesian coordinates.
-    :param X: Cartesian coordinates in the form of position vector [i,j,k] and velocity vector [i,j,k]
-    :param mu: Gravitational parameter of the central body
+    :params X: Cartesian coordinates in the form of position vector [i,j,k] and velocity vector [i,j,k]
+    :params mu: Gravitational parameter of the central body
     :return: 
+        Observation coordinates in the form of [RA, DEC, Range, RA_rate, DEC_rate, Range_rate]
+
     Position vector [i,j,k] around the center of mass of the body
 
-    Assume observations are in Equatorial topocentric Reference frame
+    Assume observations are in Equatorial Reference frame
     """
     r = X[:3]  # Position vector
-    v = X[3:]  # Velocity vector
 
-    if isinstance(X[0], Union[float, int]):
+    if isinstance(X[0], float):
         r_norm = np.linalg.norm(r)
 
     elif isinstance(X, array):
-        r_norm = r.vnorm()
-
+        r_norm = r.vnorm()      
+ 
     else: 
         raise TypeError("Input X must be either a numpy array or a DA array") 
 
-    DEC = op.sin(r[2]/r_norm)                   #Declination
-    RA = op.cos(r[0]/r_norm * 1/op.cos(DEC))    #Right Ascension
-
+    Range = r_norm                              #range 
+    DEC = op.asin(r[2]/r_norm)                   #Declination
+    RA = op.atan2(r[1], r[0])
+    
     #Ensure correct Quadrant 
-    if isinstance(X[0], Union[float, int]):
-        RA = RA % np.pi
+    if isinstance(X[0], float):
+        RA = RA % (2 * np.pi)
 
     elif isinstance(X, array):
-        RA = RA.cons() % np.pi
+        RA_cons = RA.cons() % (2 * np.pi)
+        RA_HOT = RA - RA.cons()
+        RA = RA_cons + RA_HOT
+
+    if len(X) == 6:
+
+        v = X[3:]
+        cosDEC = op.sqrt(r[0]**2 + r[1]**2) / Range
+        Range_rate = (r[0]*v[0] + r[1]*v[1] + r[2]*v[2]) / Range
+        DEC_rate = ( Range*v[2] - r[2]*Range_rate ) / ( Range**2 * (cosDEC))
+        RA_rate = (r[0]*v[1] - r[1]*v[0] ) / (r[0]**2 + r[1]**2)
+
+        #Check if boundaries
+
+        obs = [RA, DEC, Range, RA_rate, DEC_rate, Range_rate]
+        
+        if isinstance(X, array):
+            obs = array(obs)
+        elif isinstance(X, np.ndarray):
+            obs = np.array(obs)
+        
+        return obs
     
-    Range = r_norm                              #range 
+    elif len(X) == 3:
+        
+        obs = [RA, DEC, Range]
 
-    DEC_rate = ( (r[0]**2 + r[1]**2)*v[2] - r[2]*(r[0]*v[0] + r[1]*v[1] ) / ( Range**2 * op.sqrt(r[0]**2 + r[1]**2)) ) 
-    RA_rate = (r[0]*v[1] - r[1]*v[0] ) / (r[0] + r[1])
+        if isinstance(X, array):
+            obs = array(obs)
+        elif isinstance(X, np.ndarray):
+            obs = np.array(obs)
 
-    if isinstance(X, array):
-        if abs(RA_rate.cons()) < np.pi:
-             RA_rate = RA_rate  % np.pi
-    elif isinstance(X[0], Union[int,float]):
-        if abs(RA_rate) < np.pi:
-            RA_rate = RA_rate  % np.pi
+        return obs
+    
     else:
-        raise TypeError("RA_rate has failed to find correct quadrant")
-
-    if isinstance(X, array):
-        Range_rate = r.dot(v) / Range
-    elif isinstance(X[0], Union[int,float]):
-        Range_rate = np.dot(r, v) / Range
-    obs = np.zeros_like(X, dtype=object)
-    obs[0] = RA
-    obs[1] = DEC
-    obs[2] = Range
-    obs[3] = RA_rate
-    obs[4] = DEC_rate
-    obs[5] = Range_rate
-
-    return obs
+        raise ValueError("Input State vector must be either 3 or 6 in length")
 
 def obs2CC(obs: Union[array, NDArray]) -> Union[array, NDArray]:
     """
@@ -532,44 +550,45 @@ def obs2CC(obs: Union[array, NDArray]) -> Union[array, NDArray]:
         Position vector [i,j,k] and velocity vector [i,j,k] around the center of mass of the body defined by mu
     """
 
-    RA, DEC, Range, RA_rate, DEC_rate, Range_rate = obs
+    if len(obs) == 3:
+        RA, DEC, Range, RA_rate, DEC_rate, Range_rate = obs
 
-    X = np.zeros_like(obs, dtype=object)
+        x = range * op.cos(DEC) * op.cos(RA)
+        y = range * op.cos(DEC) * op.sin(RA)
+        z = range * op.sin(DEC)
 
-    u_r = [op.cos(DEC)*op.cos(RA), op.cos(DEC) * op.sin(RA), op.sin(DEC)]
-    phi_v = [ [op.cos(DEC),            -Range*op.cos(DEC)*op.sin(RA), -Range*op.sin(DEC)*op.cos(RA)], 
-              [op.cos(DEC)*op.sin(RA), Range*op.cos(DEC)*op.cos(RA) , -Range*op.sin(RA)*op.sin(RA) ],
-              [op.sin(DEC)           , 0                            , Range*op.cos(DEC)            ]
-            ]
-    rates = [Range_rate, RA_rate, DEC_rate]
+        X = [x, y, z]
 
-    #Wrapper Functions
-    if isinstance(obs, array):
-        u_r = array(u_r)
-        phi_v = np.array(phi_v)
-        rates = array(rates)
-    elif isinstance(obs[0], Union[float,int]):
-        u_r = np.array(u_r)
-        phi_v = np.array(phi_v)
-        rates = np.array(rates)
-    else:
-        raise TypeError("Input obs must be either a numpy array or a DA array")
-
-    #Calculations per Curtis
-    r = Range * u_r
-    v = phi_v @ rates
-
-    # Concatenate position and velocity vectors into one vector
-    if isinstance(obs, array):
-        X = r.concat(v)  # Concatenate position and velocity vectors into one vector'
-    elif isinstance(obs[0], Union[float,int]):
-        X = np.concatenate((r, v))
-    else:
-        raise TypeError("Input obs must be either a numpy array or a DA array")
+        if isinstance(obs, array):
+            X = array(X)
+        elif isinstance(obs, np.ndarray):
+            X = np.array(X)
+        
+        return X
     
-    return X
+    elif len(obs) == 6:
+        RA, DEC, Range, RA_rate, DEC_rate, Range_rate = obs
 
-def ECI2HelioJ2000(X_ECI, t, earth_ephem):
+        x = Range * op.cos(DEC) * op.cos(RA)
+        y = Range * op.cos(DEC) * op.sin(RA)
+        z = Range * op.sin(DEC)
+
+        vx = (Range_rate * op.cos(DEC) * op.cos(RA)) - (Range * DEC_rate * op.sin(DEC) * op.cos(RA)) - (Range * RA_rate * op.cos(DEC) * op.sin(RA))
+        vy = (Range_rate * op.cos(DEC) * op.sin(RA)) - (Range * DEC_rate * op.sin(DEC) * op.sin(RA)) + (Range * RA_rate * op.cos(DEC) * op.cos(RA))
+        vz = (Range_rate * op.sin(DEC)) + (Range * DEC_rate * op.cos(DEC))
+
+        X = [x, y, z, vx, vy, vz]
+        if isinstance(obs, array):
+            X = array(X)
+        elif isinstance(obs, np.ndarray):
+            X = np.array(X)
+
+        return X
+        
+    else: 
+        raise ValueError("The observation array must be either 3 or 6 in length")
+
+def ECI2HelioJ2000(X_ECI, earth_ephem):
     """   
       Function to convert ECI coordinates to Helio J2000 coordinates.
       DA compatible version.
@@ -580,40 +599,74 @@ def ECI2HelioJ2000(X_ECI, t, earth_ephem):
         r_helio: Position vector in Helio J2000 coordinates
         v_helio: Velocity vector in Helio J2000 coordinates
     """
-    r_Esun, v_Esun = earth_ephem.rv(Sun)                 # position & velocity w.r.t. Sun
-
-    r_hel_eq = r_Esun.to(u.km).value + X_ECI[:3]
-    v_hel_eq = v_Esun.to(u.km).value + X_ECI[3:]
-   
+    #Obtain Variables 
+    r_earth, v_earth = earth_ephem
+    r_object, v_object = X_ECI[:3], X_ECI[3:]
     offset = np.deg2rad(23.43929111)    # Offset for J2000 ecliptic coordinates
-    r_hel_ec = ROT1(offset) @ r_hel_eq  # Rotate to ecliptic frame
-    v_hel_ec = ROT1(offset) @ v_hel_eq  # Rotate velocity vector to ecliptic frame
+    
+    # Rotate first
+    r_object_eclip = ROT1(offset) @ r_object # Rotate position vector to ecliptic frame
+    v_object_eclip = ROT1(offset) @ v_object # Rotate velocity vector to ecliptic frame
+    
+    #Translate second
+    r_hel_ecliptic = r_object_eclip + r_earth  # Translate to heliocentric frame
+    v_hel_ecliptic = v_object_eclip + v_earth  # Translate velocity vector to heliocentric frame
+
     if isinstance(X_ECI[0], Union[float,int]):
-        X_hel_ec = np.concatenate((r_hel_ec, v_hel_ec))  # Concatenate position and velocity vectors
+        X_hel_ec = np.concatenate((r_hel_ecliptic, v_hel_ecliptic))  # Concatenate position and velocity vectors
     elif isinstance(X_ECI, array):
-        X_hel_ec = r_hel_ec.concat(v_hel_ec)
+        X_hel_ec = r_hel_ecliptic.concat(v_hel_ecliptic)
     else:
         assert TypeError("ECI2HelioJ2000 Failed: Input X_ECI must be either a numpy array or a DA array")
     return X_hel_ec
 
-def Helio2ECIJ200(X_hel_ec,t, earth_ephem):
-        
+def Helio2ECIJ2000(X_hel_ec, earth_ephem):
+    """
+    Convert Between Heliocentric to ECI at J200 FoR
+
+    :param x_hel_ec: Heliocentric coordinates in J2000 frame
+    :param earth_ephem: Heliocentric Ecliptic Earth ephemeris data [pos, vel] @ time of interest
+
+    :returns: State of the object in ECI coordinates
+    """
+    
+    #Conduct the Vector shift first 
     offset = np.deg2rad(23.43929111)    # Offset for J2000 ecliptic coordinates
+    r_earth_eclip, v_earth_eclip = earth_ephem[3:], earth_ephem[:3]  # Extract Earth position and velocity in ecliptic frame
+    r_object = X_hel_ec[:3]
+    v_object = X_hel_ec[3:]
 
-    r_hel_eq = ROT1(-offset) @ X_hel_ec[:3]  # Rotate to equatorial frame
-    v_hel_eq = ROT1(-offset) @ X_hel_ec[3:] 
+    r_eci_ecliptic = r_object - r_earth_eclip
+    v_eci_ecliptic = v_object - v_earth_eclip
 
-    r_Esun, v_Esun = earth_ephem.rv(Sun)
-    r_ECI = r_hel_eq - r_Esun.to(u.km).value
-    v_ECI = v_hel_eq - v_Esun.to(u.km).value
+    r_eci = ROT1(np.deg2rad(-offset)) @ r_eci_ecliptic  # Rotate to ECI frame
+    v_eci = ROT1(np.deg2rad(-offset)) @ v_eci_ecliptic  # Rotate velocity vector to ECI frame
 
     if isinstance(X_hel_ec[0], Union[float,int]):
-        X_ECI = np.concatenate((r_ECI, v_ECI))
+        X_ECI = np.concatenate((r_eci, v_eci))
     elif isinstance(X_hel_ec, array):
-        X_ECI = r_ECI.concat(v_ECI)
+        X_ECI = r_eci.concat(v_eci)
     else:
         assert TypeError("Helio2ECIJ2000 Failed: Input X_hel_ec must be either a numpy array or a DA array")
     return X_ECI
+
+def ECI2ICRS(X_ECI: Union[array, np.ndarray], earth_ephem):
+    """
+    Convert from ECI to ICRS 1) Translate from Earth -> Solar System barycentre.
+    :param X_ECI: The ECI State vector
+    :param earth_ephem: The SOLAR SYSTEM BARYCENTRIC Earth State Vector
+    :return X_ICRS: Solar system-centred equatorial State vector (ICRS)
+    """
+    return X_ECI + earth_ephem
+
+def ICRS2ECI(X_ICRS: Union[array, np.ndarray], earth_ephem):
+    """
+    Convert from ICRS to ECI 1) Translate from solar system barycentre -> Earth.
+    :param X_ICRS: The ECI State vector
+    :param earth_ephem: The SOLAR SYSTEM BARYCENTRIC Earth State Vector
+    :return X_ECI: Solar system-centred equatorial State vector (ICRS)
+    """
+    return X_ICRS - earth_ephem
 
 ####################################### Time and Degree Conversion ##############
 def HH_MM_SS_to_Degrees(RA_array: Union[array, NDArray]) -> Union[array, NDArray]:

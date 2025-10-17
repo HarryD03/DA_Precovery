@@ -7,18 +7,33 @@ import poliastro as pl
 from astropy.time import Time
 
 
-def TBP_CC_DA(rv: array, mu:float, t: float) -> array:
+def TBP_CC_DA(rv: array, t: float) -> array:
     """
     Two Body Problem in Cartesian Coordiantes
     No Perturbations
     DA only
     """
-    
+    mu = 1.327e11  # Gravitational parameter of the Sun in km^3/s^2
     pos: array = rv[:3]
     vel: array = rv[3:]
     r = pos.vnorm()         #obtain the euclidien norm (distance of the vector)
     acc = -mu * pos / (r**3)
     drv = vel.concat(acc)    #combines the velocity vector and acceleration vector into one vector
+
+    return drv
+
+def TBP_CC_FP(rv: array, t: float) -> array:
+    """
+    Two Body Problem in Cartesian Coordiantes
+    No Perturbations
+    FP only
+    """
+    mu = 1.327e11  # Gravitational parameter of the Sun in km^3/s^2
+    pos: array = rv[:3]
+    vel: array = rv[3:]
+    r = np.linalg.norm(pos)       #obtain the euclidien norm (distance of the vector)
+    acc = -mu * pos / (r**3)
+    drv = np.concatenate((vel, acc))   #combines the velocity vector and acceleration vector into one vector
 
     return drv
 

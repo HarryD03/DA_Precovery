@@ -55,7 +55,6 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
 
     #Numpy Branch 
     if isinstance(r1_radial_dir[0], float):
-        print("ENTERING NUMPY BRANCH: Position 1 is entered as a NumPy array type")
         assert isinstance(r2_radial_dir, np.ndarray), f"Position 2 must have both NumPy array types"
         
         h_dir  = np.cross(r1_radial_dir, r2_radial_dir)
@@ -71,7 +70,6 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
     
     #DaceyPy Branch
     if isinstance(r1_radial_dir[0], DA):
-        print("ENTERING DACEYPY BRANCH: Position 1 is entered as a DA array type")
         assert isinstance(r2_radial_dir[0], DA), f"Position 2 must have both DaceyPy array types"
         h_dir = r1_radial_dir.cross(r2_radial_dir)
         h_dir = h_dir / op.vnorm(h_dir)
@@ -118,9 +116,12 @@ def lambert_izzo(r1: Union[array, NDArray], r2: Union[array,NDArray], dt: float,
 
             v1 = v1.reshape((3,1))
             v2 = v2.reshape((3,1))
-            v1v2 = np.hstack([v1,v2])
+            
+            if isinstance(x, float):
+                v1v2 = np.hstack([v1,v2])
             if isinstance(x, DA):
-                v1v2 = array(v1v2)
+                v1v2 = array([v1, v2]).reshape((2,3)).T
+            
             velocities.append(v1v2)        #Append and reshape to libray standard 
 
     return velocities   #velcoity[0] is (v1,v2) of first direction, velcoity[1] is (v1,v2) of second solution
@@ -204,21 +205,24 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
                 p0 = [T, L, M]  #Parameters for Householder Iteration Scheme
             
             p = [T, L, M]  #Parameters for Householder Iteration Scheme in DA
-            import pickle
-            with open('householder_params.pkl', 'wb') as P:
-                pickle.dump(p, P)
 
-            x_nom = householder_iter_DA_nom(x_0, p0, f, tol=1e-12, MaxIter=100)
-            x_DA = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f, tol=1e-12, MaxIter=100)
-            y_DA = op.sqrt(1 + L**2*(x_DA**2-1))
-
+            #nominal solution
+            x = householderfloat(x_0, T.cons(), L.cons(), M, tol=1e-9, maxiter=100)
+            
+            x_DA = householder_DA(x, T, L, M, tol=1e-9, maxiter=100)
+            
+            #x_nom = householder_iter_DA_nom(x_0, p0, f, tol=1e-12, MaxIter=100)
+            #x_DA = householder_iter_DA_Map(x_nom, p, DA.getMaxVariables(), f, tol=1e-12, MaxIter=100)
+            #y_DA = op.sqrt(1 + L**2*(x_DA**2-1))
+            y_DA = op.sqrt(1 - L**2 * (1 - x_DA**2))
+            
             tmp = [x_DA, y_DA]
             xy.append(tmp)
     
     return xy
 
 
-def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
+def x2tof(x: Union[DA,float], M: float, L: Union[float, DA], T0, y):
     """
     Generate T(x) function is General form for a given x
 
@@ -233,11 +237,10 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
     
     K = L**2
     E = x**2 - 1
-    y = op.sqrt( 1 - L**2 * (1 - x**2))
-    
+
     if isinstance(x, DA):
         dist = np.abs(x.cons() - 1)
-        rho = np.abs(E.cons())          #POSSIBLE PROBLEM: NO Higher order DA are preserved
+        rho = (E).abs()          #POSSIBLE PROBLEM: NO Higher order DA are preserved
         xx = E.cons()
         x_cons = x.cons()
     
@@ -249,11 +252,10 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
 
     if M == 0 and np.sqrt(0.6) < x_cons < np.sqrt(1.4):
         eta = y - L * x
-        S1 = 0.5 * (1.0 - L - x * eta)
-        Q = hypergeometricF(S1, 1e-11)      
-        Q = 4/3 * Q
-        T = (eta**3 * Q + 4*L*eta) / 2 + M*np.pi/(rho*(3/2))
-        return T
+        S1 = 0.5 * (1.0 - L - x * eta)     
+        Q = 4/3 * hypergeometricF(S1, 1e-11) 
+        T = (eta**3 * Q + 4 *L *eta) / 2
+        return T - T0
     
     else: 
         psi = compute_psi(x, y, L)
@@ -262,11 +264,11 @@ def x2tof(x: Union[DA,float], M: float, L: Union[float, DA]):
         if -1 < x_cons < 1:  # Elliptical case: 1 - x**2 > 0
             sqrt_term = op.sqrt(1 - x**2)
         else:  # Hyperbolic case: 1 - x**2 < 0, so we need sqrt(|1 - x**2|) = sqrt(x**2 - 1)
-            sqrt_term = op.sqrt(x**2 - 1)
+            sqrt_term = op.sqrt(op.abs((x**2 - 1)))
             
         T = ((psi + M * np.pi) / sqrt_term - x + L*y) / (1 - x**2)
 
-        return T
+        return T - T0
     ### Old version
     if dist < lagrange and dist > battin: #Use Lagrange Tof Expression for Low energy transfers (x ->)
         T = x2tof2(x, M, L)
@@ -586,10 +588,37 @@ def compute_psi(x, y, L):
         # Elliptic Motion
         return op.acos(x*y + L * (1 - x**2))
     elif x_cons > 1: # hyperbolic
-        return op.asinh((y - x * L) * op.sqrt(x**2 -L))
+        return op.asinh((y - x * L) * op.sqrt(x**2 -1))
     else: #parabolic
         return 0.0 
+
+def householder_DA(x0, T0, L, M, tol, maxiter):
     
+    i = 1
+    for _ in range(maxiter):
+        y = op.sqrt(1 - L**2 * (1 - x0**2))
+        fval = x2tof(x0, M, L, T0, y)
+        T = fval + T0
+        fder = _tof_equation_p(x0, y, T, L)
+        fder2 = _tof_equation_p2(x0, y, T, fder, L)
+        fder3 = _tof_equation_p3(x0, y, T, fder, fder2, L)
+
+        #Householder step
+        x = x0 - fval *(
+            (fder**2 - fval * fder2 / 2)
+            / (fder * (fder**2 - fval * fder2) + fder3 * fval**2 / 6)
+        )
+
+        if i > DA.getMaxOrder():
+            return x
+        
+        i += 1
+        x0 = x
+    raise RuntimeError("Failed to converge")
+
+
+
+
 def householderfloat(p0, T0, ll, M, tol, maxiter):
     """Find a zero of time of flight equation using the Householder method.
 

@@ -106,7 +106,7 @@ def convert_obs(obs_time: pd.DataFrame, RA: pd.DataFrame, DEC: pd.DataFrame,
         obs_time: DataFrame with columns ["YYYY", "MM", "DD.dddddddddd"]
         RA: DataFrame with columns ["HH", "MM_2", "SS.sss"]
         DEC: DataFrame with columns ["sDD", "MM_3", "SS.ss"]
-        RA_sigma: DataFrame with column ["Accuracy_2"] in seconds precision
+        RA_sigma: DataFrame with column ["Accuracy_2"] in arcseconds precision
         DEC_sigma: DataFrame with column ["Accuracy_3"] in arcseconds precision
     
     Returns:
@@ -132,12 +132,12 @@ def convert_obs(obs_time: pd.DataFrame, RA: pd.DataFrame, DEC: pd.DataFrame,
 
     # 4. Convert uncertainties to degrees
     # RA sigma: seconds of time to degrees (15° per hour, so 15/3600 degrees per second)
-    RA_sigma_deg = RA_sigma["Accuracy_2"].to_numpy() * (15.0/3600.0)
+    RA_sigma_rad = RA_sigma["Accuracy_2"].to_numpy() * 4.8481e-6
     
     # DEC sigma: arcseconds to degrees (1/3600 degrees per arcsecond)
-    DEC_sigma_deg = DEC_sigma["Accuracy_3"].to_numpy() * (1.0/3600.0)
+    DEC_sigma_rad = DEC_sigma["Accuracy_3"].to_numpy() * 4.8481e-6
 
-    return obs_time_np, RA_deg, DEC_deg, RA_sigma_deg, DEC_sigma_deg
+    return obs_time_np, RA_deg, DEC_deg, RA_sigma_rad, DEC_sigma_rad
 
 def obs_extractN(NEA: pd.DataFrame, N_lower: int, N_upper: int) -> NDArray:
     """

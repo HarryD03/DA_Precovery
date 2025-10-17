@@ -1,5 +1,4 @@
 
-
 import time
 from inspect import getsourcefile
 from pathlib import Path
@@ -10,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from daceypy import ADS, DA, array
+import pickle
 
 # setup better images (tex fonts)
 plt.rcParams.update({
@@ -359,6 +359,11 @@ def figure_6(
                 final_domain[:,k,j] = final_lists[time_analysis[i]][j].box.eval(perimeter_norm[k,:])
         final_map_list.append(final_manifold)
         final_domain_list.append(final_domain)
+    #save final_map_list and final_domain_list with pickle
+    final_list = [final_map_list, final_domain_list]
+    with open("ADS_2_final_maps.pkl", "wb") as f:
+        pickle.dump(final_list, f)
+    
 
     for i in range(len(time_analysis)):
         fig, ax = plt.subplots(nrows=1,ncols=2)
@@ -395,10 +400,10 @@ def main():
     XI[0] += 1.0              #x=1
     XI[3] += np.sqrt(1.5)     #ydot=sqrt(1.5)
 
-    TF = 100.                 #Final time
+    TF = 40.                 #Final time
     T0 = 0.                  #Initial time
     Ns = 33                  #Number of gridpoints        
-    Ts = 101                  #Number of timesteps
+    Ts = 41                  #Number of timesteps
 
     # part 1 of the example, assemble perimeter of ground truth domain:
     tgrid = np.linspace(T0, TF, Ts)     #Generate time grid
@@ -458,7 +463,7 @@ def main():
 
     # compute only highest order propagation and lower orders evaluated by truncating poly map
 
-    #PROPAGATION WITHOUT DA
+    #PROPAGATION WITHOUT ADS
     try:
         # load the propagated domain if integration already exists
         with (thisfolder / 'order_1.npy').open('rb') as f:
@@ -568,7 +573,7 @@ def main():
     toll=1e-4
     Nmax=100
 
-    time_analysis = [16, 33, 34, 35, 36, 37, 38, 39, 40, 50, 60, 70, 80, 90, 100]
+    time_analysis = [16, 33, 34, 35, 36, 37, 38, 39, 40]
 
     start_basic = time.time()
     for i in range(len(time_analysis)):
@@ -603,12 +608,19 @@ def main():
         print('time ', tgrid[i+1], 'reached!')
     print('execution time advanced ADS: ', time.time() - start_advanced)
 
+    with open('final_lists_advanced.pkl', 'wb') as P:
+        pickle.dump(final_lists, P)
 
+    with open('final_lists_advanced.pkl', 'rb') as P:
+        final_lists_ex = pickle.load(P)
+    
+    print('Saved final_lists to pickle file')
+    print(final_lists_ex)
     ###################### Replication of ADS figures ######################
     figure_5(Ts, tgrid, final_lists)
     figure_6(final_lists, XF, XF14, Ns, perimeter_norm, time_analysis)
 
-    plt.show()
+    #plt.show()
 
     print('End')
 

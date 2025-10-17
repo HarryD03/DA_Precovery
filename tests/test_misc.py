@@ -68,7 +68,7 @@ def test_Implicit_solver_DA():
 
     def func(x_da, p):
         return x_da**2 - p
-
+    DA.init(order, 1)
     x_nom = newton_nomial_DA(x0, p0, func, tol=1e-14, MaxIter=1000, order=order)
     print(f"Nominal x:\n{x_nom}")
 
@@ -152,7 +152,7 @@ def test_NewtonDAVec_jacobian():
     def f(x_da, p):
         f11 = x_da[0] + 2*x_da[1] - p[0]
         f22 = x_da[0]**2 + 4*x_da[1]**2 - p[1]
-        if isinstance(x_da, array):
+        if isinstance(p, array) or isinstance(x_da, array):
             F = array([f11, f22])
         else:
             F = np.array([f11,f22])
@@ -163,7 +163,7 @@ def test_NewtonDAVec_jacobian():
     DA.init(4, 2)
     x_nom = newton_nominal_DAVec(x0, p, f, 4)
 
-    DA.init(4,4)
+    DA.init(4,2)
     p_da = array([p[i] + DA(i + 1) for i in range(2)])  # Create DA parameters
     x_da = Implicit_solver_DAVec(x_nom, p_da, f, 2)
 
@@ -278,7 +278,7 @@ def test_Implicit_solver_DAVec():
     x = newton_nominal_DAVec(x0, p, f, 4)
     # Set initial guess and parameters
 
-    DA.init(5, 6)
+    DA.init(5, 3)
 
     p = array([2.0 + DA(1), 2.0 + DA(2), 2.0 + DA(3)])
 

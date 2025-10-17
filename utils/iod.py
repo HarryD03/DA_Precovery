@@ -1,12 +1,238 @@
 import numpy as np
 from typing import Union
-from daceypy import DA, array
+from daceypy import DA, array, ADS
 import daceypy.op as op
 from numpy.typing import NDArray
 from scipy.linalg import lu_factor, lu_solve      # or numpy.linalg for tiny systems
 import scipy.linalg as la
 import utils.time_reference as time_ref
 from utils.lambert_izzo import lambert_izzo
+
+def DAIODfunc(domain: ADS, observer_position: NDArray, time_observation_seconds: NDArray, mu: float, order: int, prograde: bool) -> ADS:
+
+    RA_DA = domain.box[:3]
+    DEC_DA = domain.box[3:]
+    RA_rad = RA_DA.cons()
+    DEC_rad = DEC_DA.cons()
+    # Unit Vector
+    i_rho = time_ref.create_da_los_vectors(RA_rad, DEC_rad) 
+
+    # Guass seed - seed for newton raphson
+    positions, ranges, range_mags, v_2 = Guass_8th_seed(observer_position, i_rho, time_observation_seconds, mu)
+    
+    if not (np.isnan(positions).any() or np.isnan(ranges).any() or np.isnan(range_mags).any() or np.isnan(v_2).any()):
+        print(f"GAUSS passed:")
+    else:
+        print(f"GAUSS failed:")
+        X = []
+        X.append(list(positions[:,1]))
+        X.append(list(v_2))
+        return np.array(X).flatten()
+
+    #DAIOD_1 - DA inversion for range_mag_L1
+    range_mag_L1, Jacobian_dv = DAIOD_1Scipy_invert(range_mags, i_rho, time_observation_seconds, order, observer_position, mu,tol=1e-9, prograde_bool=prograde)
+    
+    #DAIOD2
+    range_mag_DAangles = DAIOD_2(range_mag_L1, RA_DA, DEC_DA, time_observation_seconds, order, r_obs_heliocentric=observer_position, mu=mu, J=Jacobian_dv, prograde_bool=prograde)
+
+    #DAIOD_3 - Full state definition
+    i_rho_DA = array(time_ref.create_da_los_vectors(RA_DA, DEC_DA)) 
+    range_vec = i_rho_DA * range_mag_DAangles
+    pos_vec = range_vec + observer_position    
+        
+    dt1 = time_observation_seconds[1] - time_observation_seconds[0]
+    dt2 = time_observation_seconds[2] - time_observation_seconds[1]
+
+    vel = []
+    velocities1 = lambert_izzo(pos_vec[:,0], pos_vec[:,1], dt1, mu, 0, prograde=prograde)
+    vel.append(velocities1[0])  # Unpack the first solution
+
+    velocities2 = lambert_izzo(pos_vec[:,1], pos_vec[:,2], dt2, mu, 0, prograde=prograde)
+    vel.append(velocities2[0])  # Unpack the first solution
+
+    v1 = velocities1[0][:,0]
+    v2 = velocities1[0][:,1]
+    v3 = velocities2[0][:,1]     #Velocity Vector (CC) Heliocentric Ecliptic
+        
+    vel_vec = v1.concat(v2).concat(v3)  #Concatenate the velocity vectors
+
+    if vel_vec.shape != (3,3):
+        print(f"ERROR: Velocity vector shape mismatch\nreshaping...\n")
+        vel_vec = np.array(vel_vec, dtype=object)
+        vel_vec = vel_vec.reshape((3,3)).T
+        vel_vec = array(vel_vec)
+
+    X0_CC = pos_vec.concat(vel_vec)   # NEO Cartesian State at all positions
+    X0_CC_epoch = X0_CC[:,1].copy()
+
+    return ADS(domain.box, domain.nsplit, X0_CC_epoch)
+
+def DAIOD_ADS_full(RA_rad, DEC_rad, RA_sigma_rad, DEC_sigma_rad, observer_position, time_observation_seconds, mu, order, prograde=False):
+    """
+    Full Differential Algebraic Implicit Orbit Determination (DAIOD) function:
+    - Conduct DA initialization outside of the function
+    - All coordinate transformations outside function (must be consistent and inertial)
+    :params RA_rad: Right Ascension of Observations. Structure (1x3)
+    :params DEC_rad: Declination of Observations. Structure (1x3)
+    :params RA_sigma_rad: Uncertainty in Right Ascension. Structure (1)
+    :params DEC_sigma_rad: Uncertainty in Declination. Structure (1)
+    :params observer_position: Position of the observer. Structure (3x3)
+    :params time_observation_seconds: Time of observations. Structure (1x3)
+    :params mu: Gravitational parameter. Scalar
+    :params order: Order of the DA method. Scalar
+    :params prograde_bool: Prograde flag. Boolean
+
+    :return X0_CC_epoch: DA Initial state vector at epoch. Taylor Map wrt RA/DEC. Structure (6x1) 
+    """
+
+    assert RA_rad.shape == (3,), "RA_rad must be a 1D array with 3 elements"
+    assert DEC_rad.shape == (3,), "DEC_rad must be a 1D array with 3 elements"
+
+    DA.init(order, 6)
+
+    # Unit Vector
+    i_rho = time_ref.create_da_los_vectors(RA_rad, DEC_rad) 
+
+    # Guass seed - gate for error handling
+    positions, ranges, range_mags, v_2 = Guass_8th_seed(observer_position, i_rho, time_observation_seconds, mu)
+
+    if not (np.isnan(positions).any() or np.isnan(ranges).any() or np.isnan(range_mags).any() or np.isnan(v_2).any()):
+        print(f"GAUSS passed:")
+    else:
+        print(f"GAUSS failed:")
+        X = []
+        X.append(list(positions[:,1]))
+        X.append(list(v_2))
+        return np.array(X).flatten()
+
+    if range_mags.shape != (3,):
+        print(f"ERROR: Range mags shape mismatch\nreshaping...\n")
+        range_mags = range_mags.reshape(-1)
+
+    #DAIOD_2 - DA expansion as angles
+    # Create NORMALIZED domain variables (this is key!)
+    RA_DA = array([RA_rad[i] + 3*RA_sigma_rad*DA(i + 1) for i in range(3)])
+    DEC_DA = array([DEC_rad[i] + 3*DEC_sigma_rad*DA(i + 4) for i in range(3)])
+    
+    # Set tolerances to be a fraction of the maximum variation
+    pos_tol = 1e-3  # Pirovano Defined 1km
+    vel_tol = 1e-3  # Priovano Defined 1m/s
+
+    nsplits_limit = 10  # Pirovano Defined 10 splits max
+
+    domain0 = RA_DA.concat(DEC_DA)
+
+    init_domain = ADS(domain0, [])
+    init_list = [init_domain]
+    tol = np.array([pos_tol, pos_tol, pos_tol, vel_tol, vel_tol, vel_tol])
+    #Conduct ADS
+    final_list = ADS.eval(init_list, tol, nsplits_limit, lambda domain: DAIODfunc(domain, observer_position, time_observation_seconds, mu, order, prograde))
+
+    print(f"ADS completed. Number of final domains: {len(final_list)}")
+
+    X0_CC_epoch_ADS = final_list
+
+    return X0_CC_epoch_ADS 
+
+def DAIOD_full(RA_rad, DEC_rad, RA_sigma_rad, DEC_sigma_rad, observer_position, time_observation_seconds, mu, order, prograde=False):
+    """
+    Full Differential Algebraic Implicit Orbit Determination (DAIOD) function:
+    - Conduct DA initialization outside of the function
+    - All coordinate transformations outside function (must be consistent and inertial)
+    :params RA_rad: Right Ascension of Observations. Structure (1x3)
+    :params DEC_rad: Declination of Observations. Structure (1x3)
+    :params RA_sigma_rad: Uncertainty in Right Ascension. Structure (1)
+    :params DEC_sigma_rad: Uncertainty in Declination. Structure (1)
+    :params observer_position: Position of the observer. Structure (3x3)
+    :params time_observation_seconds: Time of observations. Structure (1x3)
+    :params mu: Gravitational parameter. Scalar
+    :params order: Order of the DA method. Scalar
+    :params prograde_bool: Prograde flag. Boolean
+
+    :return X0_CC_epoch: DA Initial state vector at epoch. Taylor Map wrt RA/DEC. Structure (6x1) 
+    """
+
+    assert RA_rad.shape == (3,), "RA_rad must be a 1D array with 3 elements"
+    assert DEC_rad.shape == (3,), "DEC_rad must be a 1D array with 3 elements"
+
+    # Unit Vector
+    i_rho = time_ref.create_da_los_vectors(RA_rad, DEC_rad) 
+
+    # Guass seed - seed for newton raphson
+    positions, ranges, range_mags, v_2 = Guass_8th_seed(observer_position, i_rho, time_observation_seconds, mu)
+    
+    if not (np.isnan(positions).any() or np.isnan(ranges).any() or np.isnan(range_mags).any() or np.isnan(v_2).any()):
+        print(f"GAUSS passed:")
+    else:
+        print(f"GAUSS failed:")
+        X = []
+        X.append(list(positions[:,1]))
+        X.append(list(v_2))
+        return np.array(X).flatten()
+
+    #error clause
+    if not (np.isnan(positions).any() or np.isnan(ranges).any() or np.isnan(range_mags).any() or np.isnan(v_2).any()):
+        print(f"GAUSS passed:")
+        print(f"  positions: {positions}")
+        print(f"  ranges: {ranges}")
+        print(f"  range_mags: {range_mags}")
+        print(f"  v_2: {v_2}")
+    else:
+        print(f"GAUSS failed:")
+        print(f"  positions: {positions}")
+        print(f"  ranges: {ranges}")
+        print(f"  range_mags: {range_mags}")
+        print(f"  v_2: {v_2}")
+        return None
+
+
+
+
+    #DAIOD_1 - DA inversion for range_mag_L1
+    range_mag_L1, Jacobian_dv = DAIOD_1Scipy_invert(range_mags, i_rho, time_observation_seconds, order, observer_position, mu,tol=1e-6, prograde_bool=prograde)
+    
+
+    #DAIOD_2 - DA expansion as angles
+    RA_DA = array([RA_rad[i] + 3*RA_sigma_rad*DA(i + 1) for i in range(3)])
+    DEC_DA = array([DEC_rad[i] + 3*DEC_sigma_rad*DA(i + 4) for i in range(3)])    # Scale RA and DEC DA part so that when evaluated its within the [-1,1] range
+    range_mag_DAangles = DAIOD_2(range_mag_L1, RA_DA, DEC_DA, time_observation_seconds, order, observer_position, mu, Jacobian_dv, prograde_bool=prograde)
+
+    #DAIOD_3 - Full state definition
+    i_rho_DA = array(time_ref.create_da_los_vectors(RA_DA, DEC_DA)) 
+    range_vec = i_rho_DA * range_mag_DAangles
+    pos_vec = range_vec + observer_position    
+    
+    dt1 = time_observation_seconds[1] - time_observation_seconds[0]
+    dt2 = time_observation_seconds[2] - time_observation_seconds[1]
+
+    vel = []
+    velocities1 = lambert_izzo(pos_vec[:,0], pos_vec[:,1], dt1, mu, 0, prograde=prograde)
+    vel.append(velocities1[0])  # Unpack the first solution
+
+    velocities2 = lambert_izzo(pos_vec[:,1], pos_vec[:,2], dt2, mu, 0, prograde=prograde)
+    vel.append(velocities2[0])  # Unpack the first solution
+
+    v1 = velocities1[0][:,0]
+    v2 = velocities1[0][:,1]
+    v3 = velocities2[0][:,1]     #Velocity Vector (CC) Heliocentric Ecliptic
+    
+    vel_vec = v1.concat(v2).concat(v3)  #Concatenate the velocity vectors
+
+    if vel_vec.shape != (3,3):
+        print(f"ERROR: Velocity vector shape mismatch\nreshaping...\n")
+        vel_vec = np.array(vel_vec, dtype=object)
+        vel_vec = vel_vec.reshape((3,3)).T
+        vel_vec = array(vel_vec)
+
+    X0_CC = pos_vec.concat(vel_vec)   # NEO Cartesian State at all positions
+    X0_CC_epoch = X0_CC[:,1].copy()
+
+    return X0_CC_epoch 
+
+
+
+
+
 def DAIOD(RA: Union[NDArray,array], DEC: Union[NDArray,array], range_mag: Union[NDArray,array], r_obs_heliocentric: NDArray, t_obs_s: NDArray, mu):
 
     def f(range_mag):                                       #deltV = residual + M(dranges)
@@ -199,12 +425,12 @@ def DAIOD_1_debugSciPy(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.nd
         root of the velocity difference.
         """
         range_mag =  x + p                          #range_mag = Nominal + Perturbation
-        
+            
         range_vec = range_mag * i_rho
-                         #define posiiton vector for lamber_izzo
+                            #define posiiton vector for lamber_izzo
         r_vec = range_vec + r_obs_heliocentric
 
-    
+        
         #calculate the velocities via lamerts problem 
         velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, prograde=True)
         v2_minus = velocities[0][:,1] #unpack solutions 
@@ -215,21 +441,265 @@ def DAIOD_1_debugSciPy(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.nd
 
         DV = (v2_minus - v2_plus)
 
-        return DV                                      #DV = [dv_i, dv_j, dv_k] + M(dranges)
-
+        return DV                           #DV = [dv_i, dv_j, dv_k] + M(dranges)
+    
     assert(isinstance(range_mag_guass, np.ndarray)), "Guass Range must be in Floats"
     
-    p0 = np.zeros_like(range_mag_guass) 
-    assert order >= 4, "Order must be 4 for the Householder Iteration to work"                                       
+    # Create a wrapper function for scipy.optimize.fsolve (takes only x as input)
+    def f_scipy(x):
+        """Wrapper function for scipy that takes only x as input"""
+        p_zero = np.zeros_like(x)
+        result = f(x, p_zero)
+        return result.cons() if hasattr(result, 'cons') else result
     
-    range_mag_L1 = newton_nominal_DAVec(range_mag_guass, p0, f, order, tol, 100)      #Obtain Range so that f(Range(0)) = 0
+    # Use scipy.optimize.fsolve for robust root finding
+    from scipy.optimize import fsolve
     
+    print(f"Initial guess for fsolve: {range_mag_guass}")
+
+    range_mag_L1_nom = fsolve(f_scipy, range_mag_guass, xtol=tol)
+    print(f"fsolve converged to: {range_mag_L1_nom}")
+
+    # Convert to DA array to maintain compatibility with rest of code
     DA.init(order, 6)
+    p0 = np.zeros_like(range_mag_guass)
+        # Create DA array from the solved nominal values
+
+    p0 = np.zeros_like(range_mag_guass)  # Define p0 for the DA part
     p = array([p0[i] + DA(i+1) for i in range(len(range_mag_guass))])          #Define Range polynmoinal map
 
-    range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, 3)
+    #Generate Numerical Jacobian
+    from scipy.optimize import approx_fprime
+    
+    def f_component(range_mag, component_idx):
+        """Return specific component of velocity difference for finite difference"""
+        p_zero = np.zeros_like(range_mag)
+        dv = f(range_mag, p_zero)
+        dv_result = dv.cons() if hasattr(dv, 'cons') else dv
+        return dv_result[component_idx]
+    
+    # Compute finite difference Jacobian
+    n_vars = len(range_mag_guass)  # Number of range variables
+    fd_jacobian = np.zeros((3, n_vars))  # 3 velocity components, n_vars range components
+    h = 1e-8  # Step size for finite differences
+    
+    for i in range(3):  # velocity components [dvx, dvy, dvz]
+        def func_i(range_mag):
+            return f_component(range_mag, i)
+        fd_jacobian[i, :] = approx_fprime(range_mag_L1_nom, func_i, h)
+    
+    print(f"\n=== FINITE DIFFERENCE JACOBIAN ===")
+    print("∂[dvx, dvy, dvz]/∂[range1, range2, range3] =")
+    print(fd_jacobian)
+    
+    return range_mag_L1_nom, fd_jacobian        #DA output
 
-    return range_mag_L1        #DA output
+
+import numpy as np
+
+def DV_from_ranges_float(x, i_rho, t_obs_s, r_obs_heliocentric, mu, prograde_bool):
+    """
+    Pure-float DV(x): 3-vector. Uses the same model as in DAIOD_1Scipy_invert.f
+    x: (3,) float array of range magnitudes [km]
+    """
+    # Build positions
+    range_vec = (x.reshape(3, 1) * i_rho)              # (3x3)
+    r_vec = range_vec + r_obs_heliocentric             # (3x3)
+
+    # Lambert solves
+    v12m = lambert_izzo(r_vec[:, 0], r_vec[:, 1], t_obs_s[1] - t_obs_s[0], mu, 0, prograde=prograde_bool)[0]
+    v12p = lambert_izzo(r_vec[:, 1], r_vec[:, 2], t_obs_s[2] - t_obs_s[1], mu, 0, prograde=prograde_bool)[0]
+
+    DV = v12m[:, 1] - v12p[:, 0]                       # (3,)
+    # Ensure DV is a flat float array
+    return np.asarray(DV, dtype=float).reshape(3,)
+
+def finite_diff_Jx_DAIOD1(x_nom,
+                          i_rho,
+                          t_obs_s,
+                          r_obs_heliocentric,
+                          mu,
+                          prograde_bool=False,
+                          rel_step=1e-6,
+                          abs_step_min=1e-3,
+                          scheme="central",
+                          step_sweep=None):
+    """
+    Finite-difference Jacobian Jx = d(DV)/d(x) at x_nom.
+    x_nom: (3,) floats [km]
+    i_rho: (3x3) LOS unit vectors per epoch
+    t_obs_s: (3,) times [s]
+    r_obs_heliocentric: (3x3) observer position per epoch [km]
+    returns: (3x3) Jacobian matrix
+    """
+    x_nom = np.asarray(x_nom, dtype=float).reshape(3,)
+    # Base evaluation
+    DV0 = DV_from_ranges_float(x_nom, i_rho, t_obs_s, r_obs_heliocentric, mu, prograde_bool)
+
+    # Choose step sizes per component
+    h = np.maximum(rel_step * np.abs(x_nom), abs_step_min)
+
+    def column_by_fd(j, h_j):
+        e = np.zeros_like(x_nom); e[j] = 1.0
+        if scheme == "central":
+            xp = x_nom + h_j * e
+            xm = x_nom - h_j * e
+            DVp = DV_from_ranges_float(xp, i_rho, t_obs_s, r_obs_heliocentric, mu, prograde_bool)
+            DVm = DV_from_ranges_float(xm, i_rho, t_obs_s, r_obs_heliocentric, mu, prograde_bool)
+            return (DVp - DVm) / (2.0 * h_j)
+        elif scheme == "forward":
+            xp = x_nom + h_j * e
+            DVp = DV_from_ranges_float(xp, i_rho, t_obs_s, r_obs_heliocentric, mu, prograde_bool)
+            return (DVp - DV0) / h_j
+        else:
+            raise ValueError("scheme must be 'central' or 'forward'")
+
+    # Single-step Jacobian
+    Jx = np.column_stack([column_by_fd(j, h[j]) for j in range(3)])
+
+    # Optional step sweep to check stability (returns dict of {step: J})
+    sweep = None
+    if step_sweep is not None:
+        sweep = {}
+        for s in step_sweep:
+            h_s = np.maximum(s * np.abs(x_nom), abs_step_min)
+            J_s = np.column_stack([column_by_fd(j, h_s[j]) for j in range(3)])
+            sweep[s] = J_s
+
+    return Jx, DV0, sweep
+
+def compare_fd_vs_DA(J_fd, J_da, label_fd="FD", label_da="DA"):
+    diff = J_fd - J_da
+    def frob(A): return np.sqrt(np.sum(A*A))
+    print(f"{label_fd} Frobenius: {frob(J_fd):.6e}   {label_da} Frobenius: {frob(J_da):.6e}")
+    print(f"‖{label_fd}-{label_da}‖_F : {frob(diff):.6e}")
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rel = np.where(np.abs(J_fd) > 0, np.abs(diff)/np.abs(J_fd), 0.0)
+    print(f"Max abs diff : {np.max(np.abs(diff)):.6e}")
+    print(f"Max rel diff : {np.max(rel):.6e}")
+    return diff
+
+
+def DAIOD_1Scipy_invert(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, order, r_obs_heliocentric, mu: float, tol: float=1e-9, prograde_bool: bool=False):
+    """
+        Part 1 of the DAIOD Algorithm: Define the ranges such that DV(range_mag(p)) = 0
+
+        :param range_mag_guass: Range magnitude. See Guass_8th_seed() [km]
+        :param i_rho: Line of sight unit vector. See create_da_los_vectors() [-]
+        :param t_obs_s: The time of the observation. [s]
+        :param r_obs_heliocentric: Position of the observer. Assumed heliocentric plane, centre of Earth.  [km]
+        :param mu: The standard gravitational parameter. Assumed Sun Orbiting [km^3/s^2]
+        :param tol: The tolerance for the Newton method. [km]
+
+        :return range_mag_L1: Range Taylor Polynomial Map. range_mag_L1 + variations  [km]
+    """
+
+    def f(x, p):                                      #deltV = residual + M(dranges)
+
+        """
+        f(range_vec) returns the velocity difference between the second and first velocity estimates
+        for the central observation. The velocity difference is calculated by first calculating the
+        positions of the observations using the range vector and the observer position. The positions
+        are then used to calculate the velocities between each observation via the Izzo solution to
+        Lambert's problem. The velocity difference is then calculated as the difference between the
+        second and first velocity estimates. This function is used in the Newton method to find the
+        root of the velocity difference.
+        """
+        range_mag =  x + p                          #range_mag = Nominal + Perturbation
+        
+        range_vec = range_mag * i_rho
+                         #define posiiton vector for lamber_izzo
+        r_vec = range_vec + r_obs_heliocentric
+
+    
+        #calculate the velocities via lamerts problem 
+        velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, prograde=prograde_bool)
+        v2_minus = velocities[0][:,1] #unpack solutions 
+
+        velocities = lambert_izzo(r_vec[:,1], r_vec[:,2], t_obs_s[2] - t_obs_s[1], mu, 0, prograde=prograde_bool)
+        # Centre posiitons should have zero velocity difference
+        v2_plus = velocities[0][:,0] #unpack solutions
+
+        DV = v2_minus - v2_plus
+
+        return DV                           #DV = [dv_i, dv_j, dv_k] + M(dranges)
+    
+    assert(isinstance(range_mag_guass, np.ndarray)), "Guass Range must be in Floats"
+    
+    # Create a wrapper function for scipy.optimize.fsolve (takes only x as input)
+    def f_scipy(x):
+        """Wrapper function for scipy that takes only x as input"""
+        p_zero = np.zeros_like(x)
+        result = f(x, p_zero)
+        return result.cons() if hasattr(result, 'cons') else result
+    
+    # Use scipy.optimize.fsolve for robust root finding
+    from scipy.optimize import fsolve, root
+
+    print(f"Initial guess for fsolve: {range_mag_guass}")
+ 
+    range_mag_L1_nom = fsolve(f_scipy, range_mag_guass, xtol=tol)
+    if np.any(range_mag_L1_nom < 0) < 0:
+        raise ValueError("fsolve converged to a negative range value, which is non-physical. Change Prograde Orbit condition")
+    
+    if order is None:
+        return range_mag_L1_nom
+    # Convert to DA array to maintain compatibility with rest of code
+
+    
+    DA.init(order, 6)
+
+    i_rho = array(i_rho)
+    r_obs_heliocentric = array(r_obs_heliocentric)
+
+
+    p0 = np.zeros_like(range_mag_guass)
+    x0 = range_mag_L1_nom * np.ones(3)
+    dx = array.identity(3)
+    dp = array([DA(i+4) for i in range(3)])
+    x = x0 + dx
+    p = p0 + dp
+
+    #Complete Inversion Described by Pirovano
+    
+    F = f(x, p)          #Generate Map
+
+    F_aug = F.concat(p)
+    Finv = F_aug.invert()                   #Inversion of Map 
+    
+    rhs = array.zeros(6)
+    rhs[3:] = p
+    sol = Finv.eval(rhs) # x in terms of f and p coefficents
+    
+    dx_polys = sol[:3]  #Extract dx
+    if np.any(dx_polys.cons(), axis=0):
+        dx_polys -= dx_polys.cons()  #Ensure zero constant term
+
+    x_DA = x0 + dx_polys  #Update x with dx
+
+    F_DA = f(x_DA, p)      #F = 0 at the solution point
+
+    Jac_full = F_DA.linear()   # This is too small. f(x_DA, p) = 0
+
+    mask = np.any(np.abs(Jac_full) > 0, axis=0)  # Mask for non-zero columns
+    idx = np.where(mask)[0]  # Get indices of non-zero columns
+    Jac_nonzero = Jac_full[:, idx]  # Extract non-zero columns
+
+    # Check with Finite Differences
+    J_fd, DV0, sweep = finite_diff_Jx_DAIOD1(range_mag_L1_nom,
+                                             i_rho.cons(),
+                                             t_obs_s,
+                                             r_obs_heliocentric.cons(),
+                                             mu,
+                                             prograde_bool=prograde_bool,
+                                             rel_step=1e-6,
+                                             abs_step_min=1e-3,
+                                             scheme="central",
+                                             step_sweep=[1e-5, 1e-6, 1e-7])
+    
+    diff = compare_fd_vs_DA(J_fd, Jac_nonzero)
+    print(diff)
+    return x_DA, F.linear()[:,:3]       #DA output
 
 def DAIOD_1Scipy(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11, tol: float=1e-9):
     """
@@ -289,23 +759,24 @@ def DAIOD_1Scipy(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.ndarray,
     
     print(f"Initial guess for fsolve: {range_mag_guass}")
 
-    range_mag_L1 = fsolve(f_scipy, range_mag_guass, xtol=tol)
-    print(f"fsolve converged to: {range_mag_L1}")
-        
+    range_mag_L1_nom = fsolve(f_scipy, range_mag_guass, xtol=tol)
+    print(f"fsolve converged to: {range_mag_L1_nom}")
+
     # Convert to DA array to maintain compatibility with rest of code
-    DA.init(order, 6)
+    DA.init(order, 3)
     p0 = np.zeros_like(range_mag_guass)
         # Create DA array from the solved nominal values
 
     p0 = np.zeros_like(range_mag_guass)  # Define p0 for the DA part
     p = array([p0[i] + DA(i+1) for i in range(len(range_mag_guass))])          #Define Range polynmoinal map
-    
-    range_mag_L1 = Implicit_solver_DAVec(range_mag_L1, p, f, 3)
-    
-    return range_mag_L1        #DA output
+
+    range_mag_L1, J_L1 = Implicit_solver_DAVec(range_mag_L1_nom, p, f, 3, x0DA=False)
+
+    assert np.allclose(range_mag_L1.cons(), range_mag_L1_nom, rtol=1e-6), "DAIOD_1 failed to converge to x where f(x) = 0"
+    return range_mag_L1, J_L1         #DA output
 
 
-def DAIOD_2(range_mag: array, RA: array, DEC: array, t_obs_s: array, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11):
+def DAIOD_2(range_mag: array, RA, DEC, t_obs_s: array, order, r_obs_heliocentric: np.ndarray = np.zeros((3, 3)), mu: float=1.32712e11, J=0, prograde_bool: bool=False):
     """
         Part 2 of DAIOD Algorithm: Define the range variation in terms of anglular variations
 
@@ -316,50 +787,63 @@ def DAIOD_2(range_mag: array, RA: array, DEC: array, t_obs_s: array, order, r_ob
         :params x: Range Magnitude
         :params p: RA and DEC array
         """
-        RA, DEC = p
-        i_rho = time_ref.create_da_los_vectors(RA, DEC)
+        RA = p[:3]
+        DEC = p[3:]
         
+        i_rho = array(time_ref.create_da_los_vectors(RA, DEC))
+
         range_mag = x
 
-        range_vec = np.zeros_like(i_rho)
-        for i in range(0, len(range_mag)):
-            range_vec[:,i] = op.dot(range_mag[i], i_rho[:,i])
+        range_vec = range_mag * i_rho
+
+        r_vec = range_vec + r_obs_heliocentric
+
         
-        r_vec = np.zeros_like(range_vec)
-        for i in range(0, len(range_vec)):
-            r_vec[:,i] = range_vec[:,i] + r_obs_heliocentric[:,i]
+        #calculate the velocities via lamerts problem 
+        velocities = lambert_izzo(r_vec[:,0], r_vec[:,1], t_obs_s[1] - t_obs_s[0], mu, 0, prograde=prograde_bool)
+        v2_minus = velocities[0][:,1] #unpack solutions 
 
-        vel = []
-        for i in range(0, len(r_vec) - 1):                  #calculate the velocities via lamerts problem 
-            velocities = lambert_izzo(r_vec[:,i], r_vec[:,i+1], t_obs_s[i+1] - t_obs_s[i], mu, 0, cw=False)
-
-            #unpack solutions 
-            solution = velocities[0]
-
-            v1 = solution[:,i]
-            v2 = solution[:,i+1]
-
-            print(f"v1: {v1.cons()}\n")                 #debugging purposes
-            print(f"v2: {v2.cons()}\n")                 #debugging purposes
-
-            vel.append(v1)
-            vel.append(v2)
-
+        velocities = lambert_izzo(r_vec[:,1], r_vec[:,2], t_obs_s[2] - t_obs_s[1], mu, 0, prograde=prograde_bool)
         # Centre posiitons should have zero velocity difference
-        v2_plus = vel[2]                
-        v2_minus = vel[1]
+        v2_plus = velocities[0][:,0] #unpack solutions
 
-        DV = (v2_plus - v2_minus)
-
+        DV = (v2_minus - v2_plus)
         return DV
 
+    # Getting into Priovano Notation
+    p = RA.concat(DEC)                  # Concatenate RA and DEC into a single array    
+    x0 = range_mag.cons()
+    J_dv_x = J 
 
-    range_mag_Jac = range_mag.linear()           #Linearized Range Vector: Jacobian of Range Vector used in previous iteration
+    if J_dv_x is None or J_dv_x.shape != (3,3):
+        raise ValueError("Jacobian 3x3 J_dv must be provided for DAIOD_2")
 
-    p =  op.concat(RA, DEC)
-    range_mag_angles = Implicit_solver_DAVec(range_mag.cons(), p, f1, DA.getMaxVariables, x0DA=False, DAIOD=True, JacDAIOD=range_mag_Jac)
+    Jinv_DA = array(np.linalg.inv(J_dv_x))
+    iterMax = DA.getMaxOrder()
     
-    return range_mag_angles
+    F0 = f1(x0, p)         #Evaluate the function to get the residuals
+    J_dv_p = F0.linear()   # Extract the Jacobian w.r.t. RA and DEC
+
+    M = - Jinv_DA @ J_dv_p                      # Sensitivity Matrix (new)
+    tmp = array([DA(1+i) for i in range(6)])  # Create DA array for RA and DEC variations (new)
+    rho_map = x0 + M @ tmp  # Range Map (new)
+
+    i = 1
+    for _ in range(iterMax):
+        if i <= iterMax:
+            F = f1(rho_map, p)         #Evaluate the function to get the residuals, Old (working version) is to use x0 as rho_map
+            dF = F - F.cons()
+            dx = - (Jinv_DA @ dF)
+            if np.any(dx.cons(), axis=0):
+                dx -= dx.cons()  # Ensure zero constant term
+            
+            rho_map = rho_map + dx  #Newton Step
+            i *= 2
+            # x0 = x1
+        else:
+            break
+
+    return rho_map
 
 
 def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
@@ -375,7 +859,6 @@ def f_g_series(r0, dt, f_order, g_order, mu=1.32712440018e11, v0=None):
     """
     assert r0.ndim == 1 and r0.shape[0] == 3, "r0 must be a 1D column vector with 3 components"
     assert v0 is None or (v0.ndim == 1 and v0.shape[0] == 3), "v0 must be a 1D column vector with 3 components or None"
-    assert isinstance(dt, (int, float)), "dt must be a number"
     assert isinstance(f_order, int) and f_order >= 0, "f_order must be a non-negative integer"
     assert isinstance(g_order, int) and g_order >= 0, "g_order must be a non-negative integer"
 
@@ -463,15 +946,9 @@ def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDA
         r1[:] = np.nan
         r2[:] = np.nan
         r3[:] = np.nan
-        raise ValueError(f"Specific energy is not negative (non-elliptic): {specific_energy}")
+        v2[:] = np.nan
+        print(f"Specific energy is not negative (non-elliptic): {specific_energy}")
 
-    # Test 4: Angular Momentum is positive
-    angular_momentum = np.dot(r1, np.cross(r2, r3))
-    if angular_momentum <= 0:
-        r1[:] = np.nan
-        r2[:] = np.nan
-        r3[:] = np.nan
-        raise ValueError(f"Angular momentum is not positive: {angular_momentum}")
 
     return r1, r2, r3, v2 # Return the positions if all checks pass
 
@@ -485,6 +962,9 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
     :param t: 1D array of times in seconds
     :param obs_dir: 2D array of unit vectors pointing from observer to the point of interest, every column is an observation instance the rows are components x y z
     :param 2-BP assumption: Assume the observations lie on the same plane
+
+    :returns:
+    position, range, range_mag,v_2
    """
     dt_1 = t[0] - t[1]
     dt_3 = t[2] - t[1]
@@ -544,7 +1024,7 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
 
     #Inform user of real roots values, and conduct pruning if more than 1 real root
     r_2_mag = real_roots.real                                                #Store possible solutions of r_2
-    if len(real_roots) > 0:
+    if len(real_roots.real) > 0:
         print("There are more than 1 positive real roots.")
         range_1_mag = np.zeros((len(real_roots)))   # columns are different root value, rows are [x,y,z] components            #topocentric ranges
         range_2_mag = np.zeros((len(real_roots)))               #topocentric ranges
@@ -553,7 +1033,7 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
         r_1 = np.zeros((3,len(real_roots)))
         r_2 = np.zeros((3,len(real_roots)))                   #helocentric positions
         r_3 = np.zeros((3,len(real_roots)))
-
+    
         print(f"There are {len(real_roots)} positive real roots:\n")
 
         for i in range(len(real_roots)):
@@ -574,7 +1054,39 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
             # Calculate the range_2 and r2
             range_2_mag[i] = A + (mu * B) / (r_2_mag[i] ** 3)
     
+            if len(real_roots) >= 1:
+                if r_2_mag[i] > 164359881.2857059:          #Apophis Apoapsis
+                    print(f"Range 2 is too large for root {i}, skipping feasibility check.\n")
+                    range_1_mag[i] = np.nan
+                    range_2_mag[i] = np.nan
+                    range_3_mag[i] = np.nan
 
+                    r_2_mag[i] = np.nan
+                    r_1[:,i] = np.full((3,), np.nan)
+                    r_2[:,i] = np.full((3,), np.nan)
+                    r_3[:,i] = np.full((3,), np.nan)
+                    range_1 = np.full((3, ), np.nan)  # If no real roots, set the range to NaN
+                    range_2 = np.full((3, ), np.nan)  # If no real roots, set the range to NaN
+                    range_3 = np.full((3, ), np.nan)
+                    v_2 = np.full((3,), np.nan)
+                    continue
+
+                elif range_2_mag[i] < 0:
+                    print(f"Range 2 is negative for root {i}, skipping feasibility check.\n")
+                    range_1_mag[i] = np.nan
+                    range_2_mag[i] = np.nan
+                    range_3_mag[i] = np.nan
+                    range_1 = np.full((3, ), np.nan)  # If no real roots, set the range to NaN
+                    range_2 = np.full((3, ), np.nan)  # If no real roots, set the range to NaN
+                    range_3 = np.full((3, ), np.nan)
+                    
+                    r_2_mag[i] = np.nan
+                    r_1[:,i] = np.full((3,), np.nan)
+                    r_2[:,i] = np.full((3,), np.nan)
+                    r_3[:,i] = np.full((3,), np.nan)
+                    v_2 = np.full((3,), np.nan)
+                    continue
+                
             # calculate r1,r2, r3
             r_1[:,i] = pos_obs[:,0] + range_1_mag[i]*obs_dir[:,0]
             r_2[:,i] = pos_obs[:,1] + range_2_mag[i]*obs_dir[:,1]
@@ -589,19 +1101,34 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
             
             v_2 = 1/((f_1*g_3) - (f_3*g_1)) * (-f_3*r_1[:,i] + f_1*r_3[:,i]) 
 
-            #Assess the 3 positions for feasibility -
-            r_1, r_2, r_3, v_2 = position_feasibility(r_1[:,i], r_2[:,i], r_3[:,i], v_2, mu)
 
-            if not np.any(np.isnan([r_1, r_2, r_3, v_2])):
+            r_1[:,i], r_2[:,i], r_3[:,i], v_2 = position_feasibility(r_1[:,i], r_2[:,i], r_3[:,i], v_2, mu)
+
+            if not (np.isnan(r_1[:,i]).any() or np.isnan(r_2[:,i]).any() or np.isnan(r_3[:,i]).any() or np.isnan(v_2).any()):
                 print(f"Feasibility passed for root {i}:")
-                print(f"  r_1: {r_1}")
-                print(f"  r_2: {r_2}")
-                print(f"  r_3: {r_3}")
+                print(f"  r_1: {r_1[:,i]}")
+                print(f"  r_2: {r_2[:,i]}")
+                print(f"  r_3: {r_3[:,i]}")
 
                 range_1 = range_1_mag[i] * obs_dir[:,0]  #convert range to vector
                 range_2 = range_2_mag[i] * obs_dir[:,1]  #convert range to vector
                 range_3 = range_3_mag[i] * obs_dir[:,2]  #convert range to vector
-                continue
+                
+                idx = i
+                break   #exit loop on first feasible root
+            else:
+                print(f"Feasibility failed for root {i}:")
+                print(f"  r_1: {r_1[:,i]}")
+                print(f"  r_2: {r_2[:,i]}")
+                print(f"  r_3: {r_3[:,i]}")
+
+                range_1 = np.full((3, 1), np.nan)
+                range_2 = np.full((3, 1), np.nan)
+                range_3 = np.full((3, 1), np.nan)
+                
+                range_1_mag = np.nan
+                range_2_mag = np.nan
+                range_3_mag = np.nan
 
     else:
         print(f"There is no positive real root: {r_2}\n")
@@ -611,13 +1138,15 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
         range_1 = np.full((3, 1), np.nan)  # If no real roots, set the range to NaN
         range_2 = np.full((3, 1), np.nan)  # If no real roots, set the range to NaN
         range_3 = np.full((3, 1), np.nan)  # If no real roots, set the range to NaN
+        v_2 = np.full((3,), np.nan)
 
 
     #If no real roots, set the position and range to zero
     #obtain the [r1,r2,r3] [range1,range2,range3]. Rows are the real root, columns are positions
-    position = np.array([r_1, r_2, r_3]).T
+    position = np.column_stack([r_1[:,i], r_2[:,i], r_3[:,i]])
     ranges = np.array([range_1, range_2, range_3]).T
-    range_mag = np.hstack([range_1_mag, range_2_mag, range_3_mag])
+    range_mag = np.array([range_1_mag[i], range_2_mag[i], range_3_mag[i]])
+
     return position, ranges, range_mag, v_2
 
 
@@ -874,6 +1403,7 @@ def Implicit_solver_DA(x_da: Union[float,DA], p, f: callable):
           xp = x_da
 
         x_da = x_da.plug(k,0)
+        
 
         return x_da
 
@@ -897,26 +1427,32 @@ def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables
     k = DA.getMaxVariables() - NumVariables + 1
     x = array([x0[i] + DA(k+i) for i in range(NumVariables)])         #Initialise Variables for Automatic differentiation
 
-    
+
     if not DAIOD:
         k = DA.getMaxVariables() - NumVariables + 1
         
-        while iter <= MaxIter:   #Higher Order Taylor Map Newton Iteration (Recalculate Inverse Jacobian at each iteration for HOTM solution)
-            F = f(x, p)          #Evaluate the function at x
-            J = Jac(F)  #Calculate the inverse Jacobian of the function f at x
-
-            x_da = Nf(x, F, J)
-
-            iter *= 2
-            x = x_da
+        #while iter <= MaxIter:   #Higher Order Taylor Map Newton Iteration (Recalculate Inverse Jacobian at each iteration for HOTM solution)
+        F = f(x, p)          #Evaluate the function at x
+        Finv = F.invert()
+        rhs = array.identity(3)
+        z = Finv.eval(rhs)
+        J = F.linear()
+        x = F.invert()
         
-        if x0DA:        #Return all DA parts in the solution: x = x0 + M(p,x)
-            return x_da
+        return x, J
+        
+        #J = Jac(F)
+
+         #   x_da = Nf(x, F, J)
+          #  iter *= 2
+        
+        #if x0DA:        #Return all DA parts in the solution: x = x0 + M(p,x)
+        #    return x0
     
-        else:           #Return  x = x0 + M(p)
-            for i in range(NumVariables):
-                x_da[i] = x_da[i].plug((k+i),0)
-            return x_da
+        #else:           #Return  x = x0 + M(p)
+        #    for i in range(NumVariables):
+        #       x_da[i] = x_da[i].plug((k+i),0)
+        #    return x0
     
         #Calculate the Jacobian of the callable funtion f wrt to the DA variables
     
@@ -929,6 +1465,8 @@ def Implicit_solver_DAVec(x0: Union[array,NDArray], p, f: callable, NumVariables
 
         #DA Newton loop
         while iter <= (DA.getMaxOrder()):
+            
+            x_da  = x0 - (f(x0,p) @ np.linalg.inv(JacDAIOD))  #f(x0,p) is a vector, J0inv is the inverse Jacobian fif numpy
             x_da = Nf(x0, f(x0), J0inv)
             iter *= 2
             x0 = x_da

@@ -8,7 +8,10 @@ from daceypy import DA, array, ADS
 from utils import dynamics
 import numpy as np
 from astropy import units as u
-
+import scipy
+from scipy.integrate import solve_ivp
+import poliastro as pl
+import functools
 def RK78(Y0: array, X0: float, X1: float, f: Callable[[array, float], array]) -> array:
     """
     Propagate using RK78.
@@ -116,7 +119,8 @@ def RK78(Y0: array, X0: float, X1: float, f: Callable[[array, float], array]) ->
 
     Z[:, 0] = Y0
 
-    H = abs(HS)
+    direction = 1.0 if X1 > X0 else -1.0
+    H = abs(HS) * direction
     HH0 = abs(H0)
     HH1 = abs(H1)
     X = X0
@@ -129,12 +133,12 @@ def RK78(Y0: array, X0: float, X1: float, f: Callable[[array, float], array]) ->
         if RFNORM != 0:
             H = H * min(4.0, np.exp(HSQR * np.log(EPS / RFNORM)))
         if abs(H) > abs(HH1):
-            H = HH1
+            H = HH1 * direction
         elif abs(H) < abs(HH0) * 0.99:
-            H = HH0
+            H = HH0 * direction
             print("--- WARNING, MINIMUM STEPSIZE REACHED IN RK")
 
-        if (X + H - X1) * H > 0:
+        if (X + H - X1) * direction > 0:
             H = X1 - X
 
         for j in range(13):
@@ -200,7 +204,7 @@ def base_propagationADS(domain0: ADS, t0: float, tf: float, dynamics: Callable) 
     xf = RK78(x0, t0, tf, dynamics)                      #Propagate from 0 to i+1
     return ADS(domain0.box, domain0.nsplit, xf)
 
-def advanced_propagationADS(domain0: ADS, t0: float, tf: float, dynamics: Callable) -> ADS:
+def advanced_propagationADS(domain0: ADS, t0: float, tf: float, dynamics: Callable, mu=3.986e5) -> ADS:
     """
     Advanced ADS propagation function.
     The Previous maps, and their sub domains are carried forward and evaluated
@@ -213,12 +217,13 @@ def advanced_propagationADS(domain0: ADS, t0: float, tf: float, dynamics: Callab
     :returns
     ADS Object: (Root Domain, Number of splits, Propagated manifold)
     """
-    x0 = domain0.manifold                               #Get the manifold of the previous state 
+    x0 = domain0.manifold
+                           #Get the manifold of the previous state
     xf = RK78(x0, t0, tf, dynamics)                     #Propagate from i to i+1
-    
-    return ADS(domain0.box, domain0.nsplit, xf)         #
 
-def advanced_propagationDA(XI: array, tgrid, dynamics: Callable):
+    return ADS(domain0.box, domain0.nsplit, xf)
+
+def advanced_propagationDA(XI: array, tgrid, dynamics: Callable, mu=3.986e5):
     """
         Sequential Propagation of single domain defined by DAIOD
 
@@ -226,14 +231,14 @@ def advanced_propagationDA(XI: array, tgrid, dynamics: Callable):
     XI: Initial State
     tgrid: 1D array of timesteps to propagate through
     dynamics: Propagation Dynamics
-    retuns:
-    XFN: Propagated State at every Timestep
+    returns:
+    XFN: Propagated State at every Timestep Structure: (States x Time)
     """
 
     Ts = len(tgrid)
-    XFN = array.zeros(6,Ts)
+    XFN = array.zeros((6,Ts))
     XFN[:,0] = XI
-    x0 = XI
+    x0 = XI 
     for i in range(Ts-1):
         t0 = tgrid[i]
         tf = tgrid[i+1]
@@ -244,10 +249,89 @@ def advanced_propagationDA(XI: array, tgrid, dynamics: Callable):
 
     return XFN
 
-def base_propagationPW(x0, t0, tf, dynamics):
+def base_propagationPW(x0, t0, tf, dynamics, mu=3.986e5):
     """
-        Point-wise Propagation of Orbital Set
+        Propagates the Initial State through standard point-wise propagation
+        :param x0: initial state
+        :param t0: initial time
+        :param tf: final time
+        :param dynamics: dynamics function for propagation
+        :param perimeter: 3D perimeter for propagation
     """
-    xf = RK78(x0, t0, tf, dynamics)
-    
+    xf = RK78_scipy(x0, t0, tf, dynamics)
+
     return xf
+
+
+def _propagate_bounding_box_edges_facesPW(X0, box, t_span, dynamics):
+    """
+        Propagate the edges (2D) or faces (3D) of a 3D bounding Box
+    
+    :param X0: Nominal state vector [6,] array [x,y,z,vx,vy,vz]
+    :param box: 3D bounding box for propagation [3,], array [x,y,z]
+    :param t_span: Time span for propagation [2,], array [t0, tf]
+    :param dynamics: Dynamics function for Propagation
+    :returns: Propagated state vector
+    """
+    #convert relative coordinates to actual initial states
+    n_perimeter_points = len(box)
+    X0_boundary = np.zeros((n_perimeter_points, 6))
+
+    #relative perturbtaion to Absolute conversion
+    for i in range(n_perimeter_points):
+        X0_boundary[i,:] = X0
+        X0_boundary[i, 0:3] += box[i]  # Add the box coordinates to the nominal state
+
+    XF_boundary = np.zeros_like(X0_boundary)
+    successful_propagation = 0
+
+    for i in range(n_perimeter_points):
+        try:
+            XF_boundary[i, :] = RK78_scipy(X0_boundary[i, :], t_span[0], t_span[1], dynamics)
+            successful_propagation += 1
+
+        except Exception as e:
+            print(f"Error propagating boundary point {i}: {e}")
+            XF_boundary[i, :] = np.nan  # Mark as NaN if propagation fails
+    
+    #Remove failed Propagations
+    valid_mask = ~np.isnan(XF_boundary).any(axis=1)
+    x0_valid = X0_boundary[valid_mask,:]
+    xf_valid = XF_boundary[valid_mask,:]
+    
+    if successful_propagation == 0:
+        raise RuntimeError("All boundary points failed to propagate.")
+    
+    #Compute final position bounding box
+    XF_pos_box = xf_valid[:,0:3]
+    XF_pos_nominal = RK78_scipy(X0, t_span[0], t_span[1], dynamics)[:3]  # Nominal position at final time
+
+    return xf_valid, XF_pos_nominal
+
+def RK78_scipy(X0: array, T0: float, TF: float, f: Callable[[array, float], array], 
+               rtol: float = 1e-12, atol: float = 1e-14) -> array:
+    """
+    Propagate using SciPy's DOP853 integrator (8th order Runge-Kutta).
+    
+    :param X0: Initial state vector
+    :param X0: Initial time
+    :param X1: Final time
+    :param f: Dynamics function (RHS of ODE system)
+    :param rtol: Relative tolerance
+    :param atol: Absolute tolerance
+    :returns: Final state vector
+    """
+    
+    # Define the RHS function for SciPy (note different argument order)
+    def rhs_scipy(t, X0):
+        return dynamics.TBP_CC_FP(X0, t=t)
+
+    # Integrate using DOP853 (8th order Runge-Kutta)
+    sol = solve_ivp(rhs_scipy, [T0, TF], X0, method='DOP853',
+                    rtol=rtol, atol=atol, dense_output=False)
+    
+    if not sol.success:
+        raise RuntimeError(f"SciPy integration failed: {sol.message}")
+    
+    return sol.y[:, -1]
+

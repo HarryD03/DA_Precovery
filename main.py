@@ -1,9 +1,13 @@
 #import packages
+from utils import post_process
 import utils.observation as obs
 import utils.time_reference as time_ref
 import utils.propagation as prop
 import utils.iod as iod
 import utils.dynamics as dynamics
+from utils.lambert_izzo import lambert_izzo
+import utils.admissable_region as ar
+
 
 from typing import Callable, List, Union, overload, Tuple
 import time
@@ -81,6 +85,11 @@ obs_J2000 = (j0 - Jd_2000) * u.day    #Observation Days since J2000 epoch
 # Delete all observations but the start, end and the center observation 
 
 obs_times, RA, DEC, RA_sigma, DEC_sigma, obs_J2000= obs.filter_observations_to_three(obs_times, RA, DEC, RA_sigma, DEC_sigma, obs_J2000)
+#Define Sky Coordinates 
+coord1 = acoords.TETE(ra=RA[0], dec=DEC[0], obstime=obs_times[0])
+coord2 = acoords.TETE(ra=RA[1], dec=DEC[1], obstime=obs_times[1])
+coord3 = acoords.TETE(ra=RA[2], dec=DEC[2], obstime=obs_times[2])
+
 ########################## Define Heliocentric Frame and Earth Location within it ##############
 #THIS IS CORRECT
 mu = ac.G * ac.M_sun
@@ -126,14 +135,51 @@ for i, (pos, vel) in enumerate(pv):
     earth_pos_helio[i] = helio.xyz.to(u.km) # (Nx3)
     earth_vel_helio[i] = helio.differentials["s"].d_xyz.to(u.km/ u.s) #Nx3
 
+X_earth_helio = np.concatenate((earth_pos_helio, earth_vel_helio))
 
+#Observation Coordinate Conversion
+#coord1_helio = coord1.transform_to(HeliocentricEclipticJ2000)
+#coord2_helio = coord2.transform_to(HeliocentricEclipticJ2000)
+#coord3_helio = coord3.transform_to(HeliocentricEclipticJ2000)
 
-########################### DAIOD #############################
+#################### Obtain Angles #####################
+
 # Convert RA, DEC measurements to radians.
 RA_rad = RA.to(u.rad).value
 DEC_rad = DEC.to(u.rad).value
 RA_sigma_rad = RA_sigma.to(u.rad).value
 DEC_sigma_rad = DEC_sigma.to(u.rad).value
+
+
+#Convert time arrays to all seconds Numpy for Guass IOD
+time_sec = obs_J2000.to(u.s).value 
+
+assert len(time_sec) == 3, f"ERROR:\nOnly 3 observations times can be used.\n{len(time_sec)} observations were stored"
+
+# Generate Nominal Guass Range
+observer_position_helio = earth_pos_helio.T # The Observer is at the centre of the Earth as RA+DEC are equatorial RA DEC
+i_rho = time_ref.create_da_los_vectors(RA_rad, DEC_rad) #Define geocentric range vector [ρ̂x, ρ̂y, ρ̂z]ᵢ' Geocentric range is equatorial
+i_rho = i_rho.astype(np.float64)
+#rotate direction vector directly - equatorial to ecliptic 
+i_rho_helio = (time_ref.ROT1(np.deg2rad(23.5)) * i_rho)
+
+########################## Admissable Region #############################
+
+#ar.initiate_admissible_region(RA.value, DEC.value, obs_times, apparent_magnitude=18)
+
+########################### Gauss IOD #########################################
+
+r_IOD, _, _, v_IOD = iod.Guass_8th_seed(observer_position_helio, i_rho_helio, time_sec, mu=mu.value)
+X0_GUASS = np.concatenate((r_IOD, v_IOD))
+
+########################### DAIOD #############################################
+
+# Convert RA, DEC measurements to radians.
+RA_rad = RA.to(u.rad).value
+DEC_rad = DEC.to(u.rad).value
+RA_sigma_rad = RA_sigma.to(u.rad).value
+DEC_sigma_rad = DEC_sigma.to(u.rad).value
+
 
 #Convert time arrays to all seconds Numpy for Guass IOD
 time_sec = obs_J2000.to(u.s).value 
@@ -145,64 +191,184 @@ observer_position_helio = earth_pos_helio.T # The Observer is at the centre of t
 i_rho = time_ref.create_da_los_vectors(RA_rad, DEC_rad) #Define geocentric range vector [ρ̂x, ρ̂y, ρ̂z]ᵢ' Geocentric range is equatorial
 i_rho = i_rho.astype(np.float64)
 
-#Rotate RA and DEC first then make direction vector
-#RA_helio = time_ref.ROT1(np.deg2rad(23.5)) @ RA_rad
-#DEC_helio = time_ref.ROT1(np.deg2rad(23.5)) @ DEC_rad
-#i_rho_guess = (time_ref.create_da_los_vectors(RA_helio, DEC_helio)).astype(np.float64) #Define geocentric range vector [ρ̂x, ρ̂y, ρ̂z]ᵢ' Geocentric range is equatorial
-
 #rotate direction vector directly - equatorial to ecliptic 
 i_rho_helio = (time_ref.ROT1(np.deg2rad(23.5)) * i_rho)
-pos_guass, range_guass, range_mag_gauss = iod.Guass_8th_seed(observer_position_helio, i_rho_helio, time_sec, mu=mu.value)
-# The position interval seems okay but the range is fucked
-# Comb through Guass line by line
+pos_guass, range_guass, range_mag_gauss = iod.Guass_8th_seed(observer_position_helio, i_rho_helio, time_sec, mu=mu.value) # The position interval seems okay but the range is fucked
+
+#Show Transfer Angles
+cos_dnu12 = np.dot(pos_guass[:,0], pos_guass[:,1]) / (np.linalg.norm(pos_guass[:,0]) * np.linalg.norm(pos_guass[:,1]))
+cos_dnu23 = np.dot(pos_guass[:,1], pos_guass[:,2]) / (np.linalg.norm(pos_guass[:,1]) * np.linalg.norm(pos_guass[:,2]))
+
+print("================GAUSS TRANSFER ANGLES==================")
+print(f"cos(Δν12) = {cos_dnu12}")
+print(f"cos(Δν23) = {cos_dnu23}")
+if cos_dnu12 < 2 or cos_dnu23 < 2:
+    print("WARNING: Small Angle Transfer. Short Arc Detected")
 
 # DAIOD part 1: Conuduct Position Refinement (DA iterative refininment for Guass IOD Range magnitude)
-_, range_mag_DAIOD = iod.DAIOD_1(range_mag_gauss, i_rho_helio, time_sec, order, r_obs_heliocentric=observer_position_helio, mu=mu.value)
+range_mag_DArange, Jacobian_dv = iod.DAIOD_1Scipy_invert(range_mag_gauss, i_rho_helio, time_sec, order, r_obs_heliocentric=observer_position_helio, mu=mu.value)
 
 # DAIOD part 2: Conduct Velocity Refinement (Lambert central vleocity condition refinement)
 DA.init(order, 6)
-RA_DA = array([RA[i] + 3*RA_sigma_rad*DA(i + 1) for i in range(3)])
-DEC_DA = array([DEC[i] + 3*DEC_sigma_rad*DA(i + 4) for i in range(3)])    # Scale RA and DEC DA part so that when evaluated its within the [-1,1] range
+DA.Eps(1e-16)
 
-X_0_ECI_CC, _ = DAIOD(RA_DA, DEC_DA, range_mag_DAIOD, observer_position_helio, time_sec, mu=mu.value) 
+RA_DA = array([RA_rad[i] + 3*RA_sigma_rad*DEC_rad(i + 1) for i in range(3)])
+DEC_DA = array([DEC_rad[i] + 3*DEC_sigma_rad*DEC_rad(i + 4) for i in range(3)])    # Scale RA and DEC DA part so that when evaluated its within the [-1,1] range
 
-#X_0 = Central Orbit state (ECI-CC) at Epoch.
 
-####################### DAIOD ECI TO HELIOCENTRIC CONVERSION #####################################
-print("Translating ECI-Cartesian DAIOD output to Heliocentric-Cartesian")
+range_mag_DAangles = iod.DAIOD_2(range_mag_DArange, RA_DA, DEC_DA, time_sec, order, r_obs_heliocentric=observer_position_helio, mu=mu.value, J=Jacobian_dv)
 
-#Check X_0 is compatible with ROT1 function (much be a column)
-print(f"X_0_ECI_CC Shape:\n{X_0_ECI_CC.shape}")
+#ADD ADS FOR SPLITTING
 
-#Equator to Ecliptic tilt
-eps = np.deg2rad(23.439291)
-rot = time_ref.ROT1(eps)
-pos_ecliptic_geocentric = rot @ X_0_ECI_CC[:3]
-vel_ecliptic_geocentric = rot @ X_0_ECI_CC[3:]
 
-#Vector sum for position and velocity
-NEO_pos_helio = pos_ecliptic_geocentric + earth_pos_helio 
-NEO_vel_helio = vel_ecliptic_geocentric + earth_vel_helio
-#Epoch is the time of central observation in arc.
-X_0_Helio_CC = op.concat(NEO_pos_helio,NEO_vel_helio)
 
-############################### ADS Propagation ####################################
+# DAIOD part 3: Convert the range_magnitude Map to Cartesian State
 
-X_0_Helio_MEE = time_ref.CC2MEE(X_0_Helio_CC[:3], X_0_Helio_CC[3:], mu=mu.value)
+i_rho_DA = array(time_ref.create_da_los_vectors(RA_DA, DEC_DA))
+i_rho_ecl_DA = time_ref.ROT1(np.deg2rad(23.5) * i_rho_DA)
+range_vec = i_rho_ecl_DA * range_mag_DAangles
+pos_vec = range_vec + observer_position_helio   #Position Vector (CC) Heliocentric Ecliptic
 
+dt1 = time_sec[1] - time_sec[0]
+dt2 = time_sec[2] - time_sec[1]
+
+vel = []
+velocities1 = lambert_izzo(pos_vec[:,0], pos_vec[:,1], dt1, mu.value, mult_revs= 0, prograde=False)
+vel.append(velocities1[0])  # Unpack the first solution
+
+velocities2 = lambert_izzo(pos_vec[:,1], pos_vec[:,2], dt2, mu.value, mult_revs= 0, prograde=False)
+vel.append(velocities2[0])  # Unpack the first solution
+
+v1 = vel[0]
+v2 = vel[1]
+v3 = vel[3]     #Velocity Vector (CC) Heliocentric Ecliptic
+vel_vec = v1.concat(v2).concat(v3)  #Concatenate the velocity vectors
+
+if vel_vec.shape != (3,3):
+    print(f"ERROR: Velocity vector shape mismatch\nreshaping...\n")
+    vel_vec = np.array(vel_vec, dtype=object)
+    vel_vec = vel_vec.reshape((3,3))
+    vel_vec = array(vel_vec)
+
+X0_CC_Eclip_Helio = pos_vec.concat(vel_vec)   # NEO Cartesian State at all positions
+
+X0_CC_Eclip_Helio_Epoch = X0_CC_Eclip_Helio[:,1].copy() #Epoch Cartesian State
+
+print(f"The Epoch Cartesian State (Heliocentric Ecliptic) is:\n{X0_CC_Eclip_Helio_Epoch.cons()}\n")
+print(f"The Time at Epoch is:\n{obs_J2000[1]} @ J2000")
+print(f"The Time at Epoch is:\n{obs_times[1]} @ UT1")
+
+X0_CC_Eclip_Helio_zeroth = X0_CC_Eclip_Helio.cons()         #Constant (Zeroth Order) terms in Taylor Map
+cos_dnu12 = np.dot(X0_CC_Eclip_Helio_zeroth[:3,0], X0_CC_Eclip_Helio_zeroth[:3,1]) / (np.linalg.norm(X0_CC_Eclip_Helio_zeroth[:3,0]) * np.linalg.norm(X0_CC_Eclip_Helio_zeroth[:3,1]))
+cos_dnu23 = np.dot(X0_CC_Eclip_Helio_zeroth[:3,1], X0_CC_Eclip_Helio_zeroth[:3,2]) / (np.linalg.norm(X0_CC_Eclip_Helio_zeroth[:3,1]) * np.linalg.norm(X0_CC_Eclip_Helio_zeroth[:3,2]))
+
+print(f"================REFINED TRANSFER ANGLES==================")
+print(f"cos(Δν12) = {cos_dnu12}")
+print(f"cos(Δν23) = {cos_dnu23}")
+
+############################### FoR Conversions w/ DA ####################################
+
+X0_CC_ECI_Epoch = time_ref.Helio2ECIJ2000(X0_CC_Eclip_Helio_Epoch, X_earth_helio)
+X0_Obs_ECI_Epoch = time_ref.CC2obs(X0_CC_ECI_Epoch) #RA, DEC, Range at Epoch
+
+# X0_Helio_MEE_Epoch = time_ref.CC2MEE(X0_CC_Eclip_Helio_Epoch[:3], X0_CC_Eclip_Helio_Epoch[3:], mu=mu.value)    #Conversion for propagation
+
+############################# Obtain Box Perimeter of Initial Observation State #############################
+
+Nmax = 10 # Maximum number of splits in ADS
+t0 = time_sec[1]            # Epoch Time [Seconds]
+tf_days = 10                # Final Time [Days]
+tf = tf_days * 86400        # Final Time [Seconds]
+Ts = 100                    # Number of Time Samples
+Ns = 50                     # Number of Spatial Samples
+
+tgrid = np.linspace(t0 , tf, Ts)  # Time grid for propagation
+
+avg_sigma = 1/2 * (RA_sigma_rad + DEC_sigma_rad)  # Average sigma for the perimeter generation
+obs_perimeter_norm, obs_perimeter = post_process.generate_perimeter3D(3 * avg_sigma, Ns)
+obs_perimeter_tmp = obs_perimeter + np.zeros_like(obs_perimeter)
+
+#Observation Equorital to Heliocentric Ecliptic perimeter for Propagaiton
+CC_perimeter_tmp = time_ref.Obs2CC(obs_perimeter_tmp)
+CC_perimeter = time_ref.ECI2HelioJ2000(CC_perimeter_tmp, X_earth_helio)
+CC_perimeter_pos = CC_perimeter[:,:3]   #Position perimeter
+
+############################# Pointwise Propagation #################################
+
+#Propagate ground truth perimeters (DAIOD + PW integration along bounding box) -> This will be most accurate
+try: 
+    with (thisfolder / 'DAIOD_PW_propagation.npy').open('rb') as f:
+        XF_PW = np.load(f, allow_pickle=True)
+        XF_nom = np.load(f, allow_pickle=True)
+        duration_PW = np.load(f, allow_pickle=True)
+        print(f"Pointwise Propagation Duration: {duration_PW:.2f} seconds")
+
+except FileNotFoundError:
+    
+    #Conduct Pointwise Integration
+    XF_boundary_PW = np.zeros((CC_perimeter.shape[0], 6, Ts))       #Perimeter [perimeter X states X time]
+    XF_nom = np.zeros((6, Ts))                                      #Nominal solution
+    
+    XF_boundary_PW[:,:,0] = CC_perimeter
+    
+    start_PW = time.time()
+    for k in range(Ts-1):
+        tspan = [tgrid[k+1], tgrid[k]]
+        XF_boundary_PW[:,:,k+1], XF_nom[:,k+1] = prop._propagate_bounding_box_edges_facesPW(X0_CC_Eclip_Helio_Epoch, CC_perimeter_pos, tspan, )
+
+    end_PW = time.time()
+    duration_PW = end_PW - start_PW
+    with ('DAIOD_PW_propagation.npy').open('wb') as f:
+        np.save(f, XF_boundary_PW, allow_pickle=True)
+        np.save(f, XF_nom, allow_pickle=True)
+        np.save(f, duration_PW, allow_pickle=True)
+
+# Propagate Guass perimeters (IOD Solution + PW Integration along boundaing box) -> Compare Guass vs DAIOD
+
+try: 
+    with ('IOD_PW_propagation.npy').open('rb') as f:
+        XF_IOD_PW = np.load(f, allow_pickle=True)
+        XF_IOD_NOM = np.load(f, allow_pickle=True)
+        duration_IOD_PW = np.load(f, allow_pickle=True)
+        print(f"IOD Pointwise Propagation Duration: {duration_IOD_PW:.2f} seconds")
+
+except FileNotFoundError:
+
+    #Conduct Pointwise Integration 
+    XF_IOD_boundary_PW = np.zeros((CC_perimeter.shape[0], 6, Ts))       #Perimeter
+    XF_IOD_nom = np.zeros((6, Ts))                                      #Nominal solution
+    XF_IOD_boundary_PW[:,:,0] = CC_perimeter
+
+    start_IOD_PW = time.time()
+    for k in range(Ts-1):
+        tspan = [tgrid[k+1], tgrid[k]]
+        XF_IOD_boundary_PW[:,:,k+1], XF_IOD_nom[:,k+1] = prop._propagate_bounding_box_edges_facesPW(X0_GUASS, CC_perimeter_pos,)
+
+    end_IOD_PW = time.time()
+    duration_IOD_PW = end_IOD_PW - start_IOD_PW
+
+    with ('IOD_PW_propagation.npy').open('wb') as f:
+        np.save(f, XF_IOD_boundary_PW, allow_pickle=True)
+        np.save(f, XF_IOD_nom, allow_pickle=True)
+        np.save(f, duration_IOD_PW, allow_pickle=True)
+
+# Propagate AR perimeters (Apophis AR Perimeter Integration)
+
+
+
+############################## ADS Propgation ######################################
 # Preperation for ADS
-domain0 = X_0_Helio_MEE.copy()
-r_tol = np.array([1,1,1]) # Tolerance for position [m]
-v_tol = np.array([1e-3, 1e-3, 1e-3]) # Tolerance for velocity [m/s]
+
+domain0 = X0_CC_Eclip_Helio_Epoch.copy()
+r_tol = np.array([1,1,1]) # Tolerance for position [km]
+v_tol = np.array([1e-3, 1e-3, 1e-3]) # Tolerance for velocity [km/s]
 perturbations = np.zeros(3)
 tol = np.concatenate((r_tol, v_tol))
-Nmax = 10 # Maximum number of splits in ADS
-tgrid = np.linspace(t0 , tf, 100)  # Time grid for propagation
 
 init_domain = ADS(domain0, [])
 init_list = [init_domain]
 final_lists = []
-final_list = X_0_Helio_MEE.copy
+final_list = X0_CC_Eclip_Helio_Epoch.copy()
 final_lists.append(final_list)
 
 #ADS Domain Splitting Propagation
@@ -211,7 +377,7 @@ for i in range(len(tgrid) - 1):
     final_list = ADS.eval(
         final_list, tol, Nmax, 
         lambda domain: 
-        prop.advanced_propagationADS(domain, tgrid[i], tgrid[i+1], dynamics.TBP_MEE_DA(domain, mu, perturbations, tgrid[i]))
+        prop.advanced_propagationADS(domain, tgrid[i], tgrid[i+1], dynamics.TBP_CC_DA(domain, mu.value, tgrid[i]))
         )
     final_lists.append(final_list)
     print('time ', tgrid[i+1], 'reached!')
@@ -222,16 +388,20 @@ print(f"ADS propagation completed in {propagation_duration:.2f} seconds")
 ############################ Post Propagation Processing ################################
 
 
-# Evaluate Perimeter of Manifolds and Domain function (positiion 3D)
+# Evaluate Perimeter of Manifolds and Domain function (position 3D)
 
-# Evaluate the Perimeter of Manifolds and Domain function (pos and vel 6D)
 
-# Wittig style Manifold vs Domain figures 
+post_process.evaluate_perimeter(final_lists)
 
-# Propagation Time vs Number of Images
 
-# Arc Seperatation time vs Number of Images 
+# Wittig style Manifold vs Domain figures - figure6()
 
-# Error in DA State vs Propagation Time
 
-# Error in DA State vs Arc Seperation (Time)
+# Propagation Time vs Number of Images (Fixed Arc Length)
+
+# Arc Length time vs Number of Images (Fixed Propagation Time)
+
+# Error in DA State vs Propagation Time (Contour) (Fixed Arc Length)
+
+
+# Error in DA State vs Arc Length (Time) (Contour) (Fixed Propagation Time)

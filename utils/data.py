@@ -4,7 +4,7 @@ import argparse
 from typing import List, Tuple
 import pandas as pd
 import numpy as np
-
+import requests
 REMOVE_ALWAYS = {"N", "Val", "B", "Cat", "Cod", "Chi", "A", "M", "K", "T"}
 REMOVE_THIRD_ONLY = {"RMS", "Resid"}
 
@@ -112,5 +112,17 @@ def rwo_to_csv(input_path: str, output_path: str) -> None:
 def csv_to_pandas(input_path: str) -> pd.DataFrame:
     return pd.read_csv(input_path, skipinitialspace=True)
 
-
+def get_tle_celestrak(norad_id: int) -> tuple[str, str, str]:
+    """
+    Return (name, line1, line2) for the satellite's latest TLE.
+    """
+    url = f"https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=TLE"
+    r = requests.get(url, timeout=15)
+    r.raise_for_status()
+    lines = [ln.strip() for ln in r.text.strip().splitlines() if ln.strip()]
+    if len(lines) < 3:
+        raise RuntimeError("Response did not contain a 3-line TLE.")
+    # TLE is 3 lines: name, L1, L2 (may be multiple blocks; we take the first)
+    name, line1, line2 = lines[0], lines[1], lines[2]
+    return name, line1, line2
 

@@ -11,6 +11,7 @@
     "python.testing.pytestArgs": [
         "tests"
     ],
-    "python.debugging.justMyCode": false
+    "python.debugging.justMyCode": false,
+    "python-envs.pythonProjects": []
 
 }
