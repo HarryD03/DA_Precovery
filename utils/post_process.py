@@ -257,6 +257,8 @@ def extract_2D_points(manifold, time_idx, component_indices, convert_to_degrees=
         # Convert to degrees if specified (typically for RA-DEC coordinates)
         if convert_to_degrees and component_indices == [0, 1]:
             points_2d = np.degrees(points_2d)
+            points_2d[:,0] = points_2d[:,0] % 360  # Wrap RA to [0, 360)
+            
         
         # Add points to collection
         all_points.extend(points_2d)
@@ -525,7 +527,7 @@ def ADS_Helio2GEO(final_lists, earthEphemeris_list, time_idxs):
         geo_subdomains = []
 
         #Get Earth state at this time
-        if i < len(earthEphemeris_list):
+        if i < earthEphemeris_list.shape[1]:
             earth_ecl_state = earthEphemeris_list[:,i]
         else:
             print(f"Warning: No Earth position for time index {i}, using zeros")
@@ -1056,6 +1058,86 @@ def CADC_ESO_combine(cadc_tbl: Table, eso_tbl: Table) -> Table:
     :param cadc_tbl: The CADC table to concatenate.
     :param eso_tbl: The ESO table to concatenate.
     """
+    # Handle empty tables
+    if len(cadc_tbl) == 0 and len(eso_tbl) == 0:
+        # Both tables empty, return empty table with standard structure
+        return Table()
+    elif len(cadc_tbl) == 0:
+        # Only ESO table has data
+        eso = eso_tbl.copy()
+        
+        # Harmonize ESO table labels only
+        if "productID" not in eso.colnames and "dp_id" in eso.colnames:
+            eso.rename_column("dp_id", "productID")
+        if "publisherID" not in eso.colnames and "obs_publisher_did" in eso.colnames:
+            eso.rename_column("obs_publisher_did", "publisherID")
+        if "position_bounds" not in eso.colnames and "s_region" in eso.colnames:
+            eso.rename_column("s_region", "position_bounds")
+        if "instrument_name" not in eso.colnames and "instrument" in eso.colnames:
+            eso.rename_column("instrument", "instrument_name")
+        
+        # ESO time handling
+        if "t_min" not in eso.colnames and "mjd_obs" in eso.colnames:
+            eso["t_min"] = eso["mjd_obs"]
+        if "t_max" not in eso.colnames and "mjd_obs" in eso.colnames:
+            eso["t_max"] = eso["mjd_obs"]
+            del eso["mjd_obs"]
+        
+        # Make ESO columns unicode
+        def _make_unicode(tbl: Table, cols):
+            for c in cols:
+                if c in tbl.colnames:
+                    tbl[c] = tbl[c].astype("U")
+        
+        _make_unicode(eso, ["productID", "publisherID", "position_bounds", "collection", "instrument_name"])
+        
+        # Create ProductID if needed
+        if "ProductID" not in eso.colnames and "productID" in eso.colnames:
+            eso["ProductID"] = eso["productID"].astype("U")
+        
+        # Add provenance tag
+        eso["tap_source"] = "ESO"
+        
+        # Sort by time if available
+        if "t_min" in eso.colnames:
+            eso.sort("t_min")
+        
+        return eso
+        
+    elif len(eso_tbl) == 0:
+        # Only CADC table has data
+        cadc = cadc_tbl.copy()
+        
+        # Harmonize CADC table labels only
+        if "position_bounds" not in cadc.colnames and "s_region" in cadc.colnames:
+            cadc.rename_column("s_region", "position_bounds")
+        if "t_min" not in cadc.colnames and "time_bounds_lower" in cadc.colnames:
+            cadc.rename_column("time_bounds_lower", "t_min")
+        if "t_max" not in cadc.colnames and "time_bounds_upper" in cadc.colnames:
+            cadc.rename_column("time_bounds_upper", "t_max")
+        
+        # Make CADC columns unicode
+        def _make_unicode(tbl: Table, cols):
+            for c in cols:
+                if c in tbl.colnames:
+                    tbl[c] = tbl[c].astype("U")
+        
+        _make_unicode(cadc, ["productID", "publisherID", "position_bounds", "collection", "instrument_name"])
+        
+        # Create ProductID if needed
+        if "ProductID" not in cadc.colnames and "productID" in cadc.colnames:
+            cadc["ProductID"] = cadc["productID"].astype("U")
+        
+        # Add provenance tag
+        cadc["tap_source"] = "CADC"
+        
+        # Sort by time if available
+        if "t_min" in cadc.colnames:
+            cadc.sort("t_min")
+        
+        return cadc
+    
+    # Both tables have data - proceed with normal combination
     cadc = cadc_tbl.copy()
     eso  = eso_tbl.copy()
 
@@ -1253,8 +1335,8 @@ def image_metrics(ADQL, matched_images, truth_images):
         "TP": true_positives,
         "FP": false_positives,
         "FN": false_negatives,
-        "Precision": precision,
-        "Recall": recall,
+        "precision": precision,
+        "recall": recall,
         "F1": f1_score
     }
 
@@ -1271,17 +1353,20 @@ def full_query(polygon, start_date, end_date):
     
     AQDL_combined = CADC_ESO_combine(CADC, ESO)
 
+    if AQDL_combined is None or len(AQDL_combined) == 0:
+        print("No ADQL data found, cannot proceed with image matching.")
+        return None, None
     #Obtain SSOIS Control
     error = 0
-    if abs(start_date.mjd.value - end_date.mjd.value) < 1: 
-        SSOIS_date = start_date + 1 * u.day
-    else:
-        SSOIS_date = end_date
+    SSOIS_date = end_date
     
     SSOIS = SSOIS_Query_Apophis(error, start_date, SSOIS_date, end_date, search=False)
     print(f"SSOIS obtained length: {len(SSOIS)} ")
     
-    assert SSOIS is not None
+    if SSOIS is None or len(SSOIS) == 0:
+        print("No SSOIS data found, cannot proceed with image matching.")
+        return AQDL_combined, 0
+    
     SSOIS_tbl = Table.from_pandas(SSOIS)
 
     # Step 2: Image Matching
@@ -1292,7 +1377,7 @@ def full_query(polygon, start_date, end_date):
     metrics = image_metrics(AQDL_combined, matches, SSOIS_tbl)
     print(f"Image metrics: {metrics}")
 
-    return metrics
+    return matches, metrics
 
 def CADC_sort_CCW(RA, DEC):
     """

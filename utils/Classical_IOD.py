@@ -23,6 +23,11 @@ def los_jacobian(RA, DEC):
     du_ddelta = np.array([-sd*ca, -sd*sa, cd])
     return np.column_stack([du_dalpha, du_ddelta])  # 3x2
 
+def los_from_radec(RA, DEC):
+    cD = np.cos(DEC); sD = np.sin(DEC)
+    cA = np.cos(RA);  sA = np.sin(RA)
+    return np.array([cD*cA, cD*sA, sD])
+
 def sample_los(RA, DEC, Sigma_ra_dec, rng):
     """
     One MC draw of the line-of-sight unit vector from RA,DEC and 2x2 Covariance
@@ -30,18 +35,20 @@ def sample_los(RA, DEC, Sigma_ra_dec, rng):
     #draw RA and DEC
     d_ra, d_dec = rng.multivariate_normal(mean=[0.0, 0.0], cov=Sigma_ra_dec)
     
-    #RA and DEC conditioning: Construct to 3-sigma sampling
-    if d_ra > 3*np.sqrt(Sigma_ra_dec[0,0]) or d_ra < -3*np.sqrt(Sigma_ra_dec[0,0]):
-        d_ra = 3*np.sqrt(Sigma_ra_dec[0,0]) if d_ra > 0 else -3*np.sqrt(Sigma_ra_dec[0,0])
-
-    if d_dec > 3*np.sqrt(Sigma_ra_dec[1,1]) or d_dec < -3*np.sqrt(Sigma_ra_dec[1,1]):
-        d_dec = 3*np.sqrt(Sigma_ra_dec[1,1]) if d_dec > 0 else -3*np.sqrt(Sigma_ra_dec[1,1])
-
-    u0 = np.array([np.cos(DEC)*np.cos(RA), np.cos(DEC)*np.sin(RA), np.sin(DEC)])
-    J = los_jacobian(RA, DEC)
+    # Clamp perturbations to 3-sigma limits
+    sigma_ra = np.sqrt(Sigma_ra_dec[0, 0])
+    sigma_dec = np.sqrt(Sigma_ra_dec[1, 1])
+    d_ra = np.clip(d_ra, -3*sigma_ra, 3*sigma_ra)
+    d_dec = np.clip(d_dec, -3*sigma_dec, 3*sigma_dec)
     
-    u = u0 + J @ np.array([d_ra, d_dec])
-    return u / np.linalg.norm(u)
+    #u0 = np.array([np.cos(DEC)*np.cos(RA), np.cos(DEC)*np.sin(RA), np.sin(DEC)])
+    #J = los_jacobian(RA, DEC)
+    RA_s = RA + d_ra
+    DEC_s = DEC + d_dec
+    RA_s = (RA_s + 2*np.pi) % (2*np.pi)  # wrap to [0, 2π)
+    DEC_s = np.clip(DEC_s, -np.pi/2, np.pi/2)  # clip to [-π/2, π/2]
+    u = los_from_radec(RA_s, DEC_s)
+    return u
 
 
 def monte_carlo_gauss_PWiod(num_simulations: int, observer_position: NDArray, RA_nom, DEC_nom, time_sec: NDArray, RA_sigma, DEC_sigma, mu: float, prograde_bool_) -> NDArray:

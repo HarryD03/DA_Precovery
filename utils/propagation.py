@@ -187,6 +187,74 @@ def RK78(Y0: array, X0: float, X1: float, f: Callable[[array, float], array]) ->
 
     return Y1
 
+
+def RK4(Y0, X0: float, X1: float, f: Callable[[list, float], list], H: float = 1.0):
+    """
+    Fixed-step classical RK4 (DA-compatible).
+    Parameters
+    ----------
+    Y0 : array-like (list/NumPy/DA vector with elementwise +, *, etc.)
+        Initial state at X0.
+    X0, X1 : float
+        Start and end independent variable (time). Works for X1 < X0 (backward).
+    f : callable
+        RHS: f(Y, X) -> same shape/type as Y.
+    H : float
+        Step *magnitude* to use internally (fixed). Default 1.0 (set what you need).
+
+    Returns
+    -------
+    Y1 : same type as Y0
+        State at X1.
+    """
+
+    # ---- tiny DA-safe vector helpers (elementwise ops, no NumPy required) ----
+    def vcopy(y): return [yi for yi in y] if isinstance(y, (list, tuple)) else y.copy()
+    def zeros_like(y): return [0*yi for yi in y] if isinstance(y, (list, tuple)) else (0*y)
+    def axpy(a, x, y):  # y + a*x
+        if isinstance(y, (list, tuple)):
+            return [yi + a*xi for xi, yi in zip(x, y)]
+        return y + a * x
+
+    # normalize inputs
+    Y = vcopy(Y0)
+    X = float(X0)
+    sgn = 1.0 if X1 >= X0 else -1.0
+    hmag = abs(H)
+    if hmag <= 0.0:
+        raise ValueError("H must be nonzero for fixed-step RK4")
+    hmag = min(hmag, abs(X1 - X))  # don't step past the interval
+    h = sgn * hmag
+
+    # main loop
+    while (X1 - X) * sgn > 0:
+        # clamp final step to hit X1 exactly
+        if abs(X + h - X1) < 1e-15 or (X + h - X1) * sgn > 0:
+            h = X1 - X
+
+        # RK4 stages
+        k1 = f(Y, X)
+        k2 = f(axpy(0.5*h, k1, vcopy(Y)), X + 0.5*h)
+        k3 = f(axpy(0.5*h, k2, vcopy(Y)), X + 0.5*h)
+        k4 = f(axpy(h,     k3, vcopy(Y)), X + h)
+
+        incr = zeros_like(Y)
+        incr = axpy(h/6.0, k1, incr)
+        incr = axpy(h/3.0, k2, incr)
+        incr = axpy(h/3.0, k3, incr)
+        incr = axpy(h/6.0, k4, incr)
+
+        Y = axpy(1.0, incr, vcopy(Y))
+        X = X + h
+
+        # keep the fixed step for subsequent iterations, but don’t overshoot
+        h = sgn * min(hmag, abs(X1 - X)) if (X1 - X) * sgn > 0 else h
+
+    return Y
+
+
+
+
 def base_propagationADS(domain0: ADS, t0: float, tf: float, dynamics: Callable) -> ADS:
     """
     Base ADS propagation function.
@@ -219,8 +287,9 @@ def advanced_propagationADS(domain0: ADS, t0: float, tf: float, dynamics: Callab
     """
     x0 = domain0.manifold
                            #Get the manifold of the previous state
-    xf = RK78(x0, t0, tf, dynamics)                     #Propagate from i to i+1
-
+    # xf = RK78(x0, t0, tf, dynamics)                     #Propagate from i to i+1
+    H_step = (tf - t0)/2
+    xf = RK4(x0, t0, tf, dynamics, H=H_step)                     #Propagate from i to i+1
     return ADS(domain0.box, domain0.nsplit, xf)
 
 def advanced_propagationDA(XI: array, tgrid, dynamics: Callable, mu=3.986e5):
@@ -242,7 +311,9 @@ def advanced_propagationDA(XI: array, tgrid, dynamics: Callable, mu=3.986e5):
     for i in range(Ts-1):
         t0 = tgrid[i]
         tf = tgrid[i+1]
-        xf = RK78(x0,t0, tf, dynamics)
+        H_step = (tf - t0)/2
+        xf = RK4(x0,t0, tf, dynamics, H=H_step)                     #Propagate from i to i+1
+        # xf = RK78(x0,t0, tf, dynamics)                     #Propagate from i to i+1
         XFN[:,i+1] = xf.copy()
 
         x0 = xf 
@@ -258,10 +329,114 @@ def base_propagationPW(x0, t0, tf, dynamics, mu=3.986e5):
         :param dynamics: dynamics function for propagation
         :param perimeter: 3D perimeter for propagation
     """
-    xf = RK78_scipy(x0, t0, tf, dynamics)
+    H_step = abs((tf - t0)/2)
+    xf = RK4_float_vec(x0, t0, tf, dynamics, H=H_step)
 
     return xf
 
+def RK4_float_vec(Y0, X0: float, X1: float,
+                  f: Callable[[np.ndarray, float], np.ndarray],
+                  H: float = 1.0) -> np.ndarray:
+    """
+    Classical RK4 for y' = f(y, x) where y is a vector of floats (NumPy array).
+    Works for forward (X1 > X0) and backward (X1 < X0) propagation.
+
+    Parameters
+    ----------
+    Y0 : array-like of float
+        Initial state y(X0); will be converted to np.ndarray(dtype=float).
+    X0, X1 : float
+        Start/end of the independent variable.
+    f : callable
+        RHS: f(y, x) -> dy/dx as a vector (np.ndarray of same shape as y).
+    H : float
+        Step **magnitude** (sign is ignored). Must be nonzero.
+
+    Returns
+    -------
+    np.ndarray
+        Approximation of y(X1).
+    """
+    if H == 0.0:
+        raise ValueError("H must be nonzero (use magnitude; direction from X1 - X0).")
+
+    y = np.asarray(Y0, dtype=float).copy()
+    x = float(X0)
+
+    if X1 == X0:
+        return y
+
+    sgn = 1.0 if X1 > X0 else -1.0
+    h_mag = min(abs(H), abs(X1 - X0))
+    h = sgn * h_mag
+
+    while (X1 - x) * sgn > 0.0:
+        # clamp last step to land exactly on X1
+        if (x + h - X1) * sgn > 0.0:
+            h = X1 - x
+
+        k1 = f(y, x)
+        k2 = f(y + 0.5*h*k1, x + 0.5*h)
+        k3 = f(y + 0.5*h*k2, x + 0.5*h)
+        k4 = f(y + h*k3,     x + h)
+
+        y = y + (h/6.0) * (k1 + 2.0*k2 + 2.0*k3 + k4)
+        x = x + h
+
+        # restore nominal step for next iteration (without overshooting)
+        if (X1 - x) * sgn > 0.0:
+            h = sgn * min(h_mag, abs(X1 - x))
+
+    return y
+def RK4_float(Y0: float, X0: float, X1: float,
+              f: Callable[[float, float], float],
+              H: float = 1.0) -> float:
+    """
+    Classical RK4 for y' = f(y, x) with fixed step size magnitude H.
+    Works for forward (X1 > X0) and backward (X1 < X0) propagation.
+
+    Parameters
+    ----------
+    Y0 : float          # initial value y(X0)
+    X0, X1 : float      # start/end of independent variable
+    f : (y, x) -> dy/dx
+    H : float           # positive step *magnitude* (sign handled internally)
+
+    Returns
+    -------
+    float : y(X1)
+    """
+    if H <= 0.0:
+        raise ValueError("H must be positive (use magnitude only).")
+
+    y = float(Y0)
+    x = float(X0)
+
+    if X1 == X0:
+        return y
+
+    sgn = 1.0 if X1 > X0 else -1.0
+    h_mag = min(H, abs(X1 - X0))
+    h = sgn * h_mag
+
+    while (X1 - x) * sgn > 0.0:
+        # clamp last step to land exactly on X1
+        if (x + h - X1) * sgn > 0.0:
+            h = X1 - x
+
+        k1 = f(y, x)
+        k2 = f(y + 0.5*h*k1, x + 0.5*h)
+        k3 = f(y + 0.5*h*k2, x + 0.5*h)
+        k4 = f(y + h*k3,     x + h)
+
+        y += (h/6.0) * (k1 + 2.0*k2 + 2.0*k3 + k4)
+        x += h
+
+        # restore nominal step for next iteration (without overshooting)
+        if (X1 - x) * sgn > 0.0:
+            h = sgn * min(h_mag, abs(X1 - x))
+
+    return y
 
 def _propagate_bounding_box_edges_facesPW(X0, box, t_span, dynamics):
     """

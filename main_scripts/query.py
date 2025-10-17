@@ -9,7 +9,7 @@ from daceypy import DA, ADS, array
 from astropy.time import Time, TimeDelta
 from astropy import units as u
 import matplotlib.pyplot as plt
-
+import time
 # Add parent directory to Python path
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
@@ -17,6 +17,92 @@ sys.path.insert(0, str(parent_dir))
 import utils.post_process as post
 
 # Add after line 17 (after imports):
+
+def adaptive_buffer_polygon(polygon, base_buffer_arcsec=10.0, scale_factor=0.5, min_buffer_arcsec=3.0, max_buffer_arcsec=15.0):
+    """
+    Apply an adaptive buffer to a polygon based on its equivalent radius
+    SMALLER regions get LARGER buffers, LARGER regions get SMALLER buffers
+    
+    :param polygon: Input polygon (alphashape or convex hull)
+    :param base_buffer_arcsec: Base buffer size in arcseconds for a "typical" size polygon
+    :param scale_factor: Scaling factor to adjust buffer sensitivity (higher = more aggressive inverse scaling)
+    :param min_buffer_arcsec: Minimum buffer size in arcseconds (for very large shapes)
+    :param max_buffer_arcsec: Maximum buffer size in arcseconds (for very small shapes)
+    :return: Buffered polygon
+    """
+    import numpy as np
+    
+    if polygon is None or polygon.area <= 0:
+        return polygon
+    
+    try:
+        # Calculate equivalent radius from area (assuming roughly circular shape)
+        # Area = π * r² → r = sqrt(Area/π)
+        # Convert from steradians to degrees: 1 steradian ≈ (180/π)² deg²
+        area_deg2 = polygon.area * (180/np.pi)**2
+        equivalent_radius_deg = np.sqrt(area_deg2 / np.pi)
+        equivalent_radius_arcsec = equivalent_radius_deg * 3600  # Convert to arcseconds
+        
+        # INVERSE Adaptive buffer calculation
+        # For SMALL shapes: use LARGE buffer (max_buffer)
+        # For LARGE shapes: use SMALL buffer (min_buffer)
+        # Scale inversely with size
+        
+        if equivalent_radius_arcsec < 9:  # Very small shapes - need big buffers
+            adaptive_buffer_arcsec = max_buffer_arcsec
+        elif equivalent_radius_arcsec > 50.0:  # Very large shapes - need small buffers
+            adaptive_buffer_arcsec = min_buffer_arcsec
+        else:
+            # INVERSE scale buffer with shape size
+            # buffer = base_buffer * (reference_size / shape_size)^scale_factor
+            reference_size_arcsec = 5.0  # Reference size for base buffer
+            inverse_size_ratio = reference_size_arcsec / equivalent_radius_arcsec
+            adaptive_buffer_arcsec = base_buffer_arcsec * (inverse_size_ratio ** scale_factor)
+            
+            # Apply bounds
+            adaptive_buffer_arcsec = max(min_buffer_arcsec, min(adaptive_buffer_arcsec, max_buffer_arcsec))
+        
+        # Convert buffer from arcseconds to degrees
+        buffer_degrees = adaptive_buffer_arcsec / 3600.0
+        
+        # Apply buffer
+        buffered_polygon = polygon.buffer(buffer_degrees)
+        
+        print(f"    Adaptive buffer applied: equivalent_radius={equivalent_radius_arcsec:.1f}\", "
+              f"buffer={adaptive_buffer_arcsec:.1f}\" (INVERSE scaling), "
+              f"area_ratio={buffered_polygon.area/polygon.area:.2f}")
+        
+        return buffered_polygon
+        
+    except Exception as e:
+        print(f"    Warning: Adaptive buffer failed ({e}), returning original polygon")
+        return polygon
+
+def simple_buffer_polygon(polygon, buffer_arcsec=5.0):
+    """
+    Apply a simple fixed buffer to a polygon
+    
+    :param polygon: Input polygon (alphashape or convex hull)
+    :param buffer_arcsec: Buffer size in arcseconds
+    :return: Buffered polygon
+    """
+    if polygon is None:
+        return polygon
+    
+    try:
+        # Convert buffer from arcseconds to degrees
+        buffer_degrees = buffer_arcsec / 3600.0
+        
+        # Apply buffer
+        buffered_polygon = polygon.buffer(buffer_degrees)
+        
+        print(f"    Simple buffer applied: {buffer_arcsec}\" → area_ratio={buffered_polygon.area/polygon.area:.2f}")
+        
+        return buffered_polygon
+        
+    except Exception as e:
+        print(f"    Warning: Simple buffer failed ({e}), returning original polygon")
+        return polygon
 
 def detect_and_fix_segment_overlaps(alphashape, method_name, tolerance_rad=1e-8):
     """
@@ -371,7 +457,7 @@ def load_all_simulation_data():
             
             print(f"  Arc {arc_index}: dt={arc_data['current_dt']:.3f}d, "
                   f"{arc_data['Ts']} time steps, "
-                  f"{len(arc_data['alphashapes']['DAIOD_ADS_ADS'])} alphashapes per method")
+                  f"{len(arc_data['alphashapes']['DAIOD_ADS_DA'])} alphashapes per method")
             
         except Exception as e:
             print(f"Error loading {pickle_file}: {e}")
@@ -382,7 +468,11 @@ def load_all_simulation_data():
 
 def run_queries_for_arc(arc_data, arc_index):
     """Run database queries for a single arc's data"""
-    
+    import time
+    t_required = Time(["2005-05-17 01:20:55","2005-04-17 01:20:55","2005-03-17 01:20:55", "2005-02-17 01:20:55","2005-01-18 01:16:50", "2005-01-17 01:19:11"], scale='utc')       #Timestamps of SSOIS images
+    t_required_s = (t_required.mjd * u.day).to(u.s).value   #Get Propagation in Programme units
+    print("=== Apophis Query Processing ===")
+    time_ref = time.time()
     print(f"\n=== Processing Arc {arc_index} ===")
     print(f"Arc length: {arc_data['current_dt']:.3f} days")
     print(f"Time range: {arc_data['tstart'].iso} to {arc_data['tfinal'].iso}")
@@ -392,8 +482,31 @@ def run_queries_for_arc(arc_data, arc_index):
     t_propagation = arc_data['t_propagation']
     alphashapes = arc_data['alphashapes']
     
-    # Initialize result storage
-    methods = ['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC']
+    # Determine which time indices to query
+    # 1. Find indices of t_required_s times in tgrid
+    required_indices = []
+    tolerance_sec = 60.0  # 1 minute tolerance for matching
+    
+    for req_time in t_required_s:
+        time_diffs = np.abs(tgrid - req_time)
+        closest_idx = np.argmin(time_diffs)
+        if time_diffs[closest_idx] <= tolerance_sec:
+            required_indices.append(closest_idx)
+    
+    # 2. Add 6 equally spaced indices from the full propagation array
+    total_times = len(tgrid)
+    equally_spaced_indices = np.linspace(0, total_times-1, 6, dtype=int)
+    
+    # 3. Combine and remove duplicates
+    query_indices = sorted(list(set(required_indices + list(equally_spaced_indices))))
+    
+    print(f"Query indices selected: {len(query_indices)} out of {total_times} total times")
+    print(f"Required time indices (SSOIS images): {required_indices}")
+    print(f"Equally spaced indices: {list(equally_spaced_indices)}")
+    print(f"Final query indices: {query_indices}")
+    
+    # Initialize result storage - keep full n_times for compatibility but only process selected indices
+    methods = ['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC']
     n_times = len(tgrid)
     n_methods = len(methods)
     
@@ -408,23 +521,33 @@ def run_queries_for_arc(arc_data, arc_index):
         
         # NEW: Add geometry information storage
         'geometry_info': {
-            'shape_types': np.full((n_times, n_methods), '', dtype='U20'),  # 'alphashape' or 'convex_hull'
+            'shape_types': np.full((n_times, n_methods), '', dtype='U30'),  # 'buffered_alphashape', 'buffered_convex_hull', etc.
             'vertex_counts': np.zeros((n_times, n_methods), dtype=int),
             'areas': np.zeros((n_times, n_methods)),
             'was_fixed': np.zeros((n_times, n_methods), dtype=bool),
-            'fix_methods': np.full((n_times, n_methods), '', dtype='U20'),
+            'fix_methods': np.full((n_times, n_methods), '', dtype='U30'),  # 'adaptive_buffer', 'buffered_convex_hull', etc.
             'processing_notes': np.full((n_times, n_methods), '', dtype='U100')
         }
     }
     
-    # Run queries for each time step and method
-    for time_idx in range(n_times):
+    # Store query processing info for later use
+    query_processing_info = {
+        'query_indices': query_indices,
+        'required_indices': required_indices,
+        'equally_spaced_indices': list(equally_spaced_indices),
+        'total_times_available': total_times,
+        'total_times_processed': len(query_indices)
+    }
+    
+    # Run queries only for selected time indices
+    for time_idx in query_indices:
         print(f"  Time step {time_idx+1}/{n_times} ({t_propagation[time_idx].iso})")
         
         # Define query time window
         t_start = t_propagation[time_idx]
-        t_end = t_start + TimeDelta(30, format='sec')  # 30 second window
-        
+        t_end = t_start + TimeDelta(120, format='sec')  # 60 second window
+        t_start = t_start - TimeDelta(120, format='sec')  # 60 seconds before
+        print(f"  Time step {time_idx+1}/{n_times} Search time: ({t_start.iso} - {t_end.iso})")
         for method_idx, method_name in enumerate(methods):
             try:
                 # Get the alphashape for this method and time
@@ -443,10 +566,16 @@ def run_queries_for_arc(arc_data, arc_index):
                 processing_notes = []
                 
                 try:
-                    # Try with original alphashape first
+                    # Apply flat 35 arcsecond buffer to the original alphashape
+                    buffered_alphashape = simple_buffer_polygon(
+                        alphashape, 
+                        buffer_arcsec=60.0  # Fixed 60 arcsecond buffer
+                    )
+                    
+                    # Try with buffered alphashape first
                     import time
                     query_start = time.time()
-                    metrics = post.full_query(alphashape, t_start, t_end)
+                    SSOIS_matches, metrics = post.full_query(buffered_alphashape, t_start, t_end)
                     query_time = time.time() - query_start
                     
                     # Store successful results
@@ -458,16 +587,17 @@ def run_queries_for_arc(arc_data, arc_index):
                     query_results['recall'][time_idx, method_idx] = metrics['recall']
                     query_results['query_times'][time_idx, method_idx] = query_time
                     
-                    # Store geometry info for successful alphashape
-                    query_results['geometry_info']['shape_types'][time_idx, method_idx] = shape_type
-                    query_results['geometry_info']['vertex_counts'][time_idx, method_idx] = len(alphashape.exterior.coords) - 1
-                    query_results['geometry_info']['areas'][time_idx, method_idx] = alphashape.area
+                    # Store geometry info for successful buffered alphashape
+                    used_shape = buffered_alphashape
+                    query_results['geometry_info']['shape_types'][time_idx, method_idx] = "buffered_alphashape"
+                    query_results['geometry_info']['vertex_counts'][time_idx, method_idx] = len(buffered_alphashape.exterior.coords) - 1
+                    query_results['geometry_info']['areas'][time_idx, method_idx] = buffered_alphashape.area
                     query_results['geometry_info']['was_fixed'][time_idx, method_idx] = False
-                    query_results['geometry_info']['fix_methods'][time_idx, method_idx] = "none"
-                    query_results['geometry_info']['processing_notes'][time_idx, method_idx] = "original_alphashape_success"
+                    query_results['geometry_info']['fix_methods'][time_idx, method_idx] = "adaptive_buffer"
+                    query_results['geometry_info']['processing_notes'][time_idx, method_idx] = "buffered_alphashape_success"
                     
-                    print(f"    {method_name}: ✓ SUCCESS (ALPHASHAPE) - {metrics['Total_Images']} images, "
-                          f"vertices: {len(alphashape.exterior.coords) - 1}, "
+                    print(f"    {method_name}: ✓ SUCCESS (BUFFERED ALPHASHAPE) - {metrics['Total_Images']} images, "
+                          f"vertices: {len(buffered_alphashape.exterior.coords) - 1}, "
                           f"P={metrics['precision']:.3f}, R={metrics['recall']:.3f} ({query_time:.2f}s)")
                     
                 except Exception as e:
@@ -497,12 +627,18 @@ def run_queries_for_arc(arc_data, arc_index):
                     # Try convex hull as fallback
                     if 'spherepoly_from_array' in error_msg:
                         try:
-                            print(f"      → Trying convex hull fallback...")
+                            print(f"      → Trying buffered convex hull fallback...")
                             test_hull = alphashape.convex_hull
+                            
+                            # Apply flat 35 arcsecond buffer to convex hull too
+                            buffered_hull = simple_buffer_polygon(
+                                test_hull,
+                                buffer_arcsec=60.0  # Fixed 60 arcsecond buffer
+                            )
                             
                             import time
                             query_start = time.time()
-                            metrics = post.full_query(test_hull, t_start, t_end)
+                            metrics = post.full_query(buffered_hull, t_start, t_end)
                             query_time = time.time() - query_start
                             
                             # Store convex hull results
@@ -514,22 +650,22 @@ def run_queries_for_arc(arc_data, arc_index):
                             query_results['recall'][time_idx, method_idx] = metrics['recall']
                             query_results['query_times'][time_idx, method_idx] = query_time
                             
-                            # Store geometry info for convex hull
-                            used_shape = test_hull
-                            shape_type = "convex_hull"
+                            # Store geometry info for buffered convex hull
+                            used_shape = buffered_hull
+                            shape_type = "buffered_convex_hull"
                             was_fixed = True
-                            fix_method = "convex_hull"
+                            fix_method = "buffered_convex_hull"
                             
                             query_results['geometry_info']['shape_types'][time_idx, method_idx] = shape_type
-                            query_results['geometry_info']['vertex_counts'][time_idx, method_idx] = len(test_hull.exterior.coords) - 1
-                            query_results['geometry_info']['areas'][time_idx, method_idx] = test_hull.area
+                            query_results['geometry_info']['vertex_counts'][time_idx, method_idx] = len(buffered_hull.exterior.coords) - 1
+                            query_results['geometry_info']['areas'][time_idx, method_idx] = buffered_hull.area
                             query_results['geometry_info']['was_fixed'][time_idx, method_idx] = True
                             query_results['geometry_info']['fix_methods'][time_idx, method_idx] = fix_method
-                            query_results['geometry_info']['processing_notes'][time_idx, method_idx] = f"alphashape_failed_convex_hull_success"
+                            query_results['geometry_info']['processing_notes'][time_idx, method_idx] = f"alphashape_failed_buffered_convex_hull_success"
                             
-                            print(f"      ✓ Convex hull works: {metrics['Total_Images']} images, "
-                                  f"vertices: {len(test_hull.exterior.coords) - 1}")
-                            print(f"    {method_name}: ✓ SUCCESS (CONVEX HULL) - {metrics['Total_Images']} images, "
+                            print(f"      ✓ Buffered convex hull works: {metrics['Total_Images']} images, "
+                                  f"vertices: {len(buffered_hull.exterior.coords) - 1}")
+                            print(f"    {method_name}: ✓ SUCCESS (BUFFERED CONVEX HULL) - {metrics['Total_Images']} images, "
                                   f"P={metrics['precision']:.3f}, R={metrics['recall']:.3f} ({query_time:.2f}s)")
                             
                         except Exception as hull_error:
@@ -566,8 +702,17 @@ def run_queries_for_arc(arc_data, arc_index):
                 print(f"    {method_name}: ✗ UNEXPECTED ERROR - {e}")
                 query_results['geometry_info']['processing_notes'][time_idx, method_idx] = f"unexpected_error: {str(e)[:50]}"
                 continue
-    
-    return query_results
+            
+        time_elapsed = time.time() - time_ref
+        print(f"  Time elapsed for timestep {time_idx / n_times}: {time_elapsed/60} minutes")
+
+    print(f"\n=== Arc {arc_index} Query Processing Summary ===")
+    print(f"Total time steps available: {total_times}")
+    print(f"Time steps processed: {len(query_indices)}")
+    print(f"Required SSOIS times found: {len(required_indices)}")
+    print(f"Processing efficiency: {len(query_indices)/total_times*100:.1f}%")
+
+    return query_results, query_processing_info
 
 def save_query_results(all_query_results, output_dir):
     """Save all query results to files in the same format as simulation data files"""
@@ -584,6 +729,7 @@ def save_query_results(all_query_results, output_dir):
     for arc_idx, result_data in all_query_results.items():
         arc_data = result_data['arc_data']
         query_results = result_data['query_results']
+        query_processing_info = result_data['query_processing_info']
         
         # Extract arc length for filename
         dt_days = arc_data['current_dt']
@@ -600,26 +746,31 @@ def save_query_results(all_query_results, output_dir):
             
             # Query performance metrics by method
             'query_performance': {
-                'methods': ['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC'],
+                'methods': ['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC'],
+                'processed_time_indices': query_processing_info['query_indices'],
+                'required_time_indices': query_processing_info['required_indices'],
+                'equally_spaced_indices': query_processing_info['equally_spaced_indices'],
+                'total_times_available': query_processing_info['total_times_available'],
+                'total_times_processed': query_processing_info['total_times_processed'],
                 'total_images_found': {
                     method: query_results['N_images'][:, idx].sum() 
-                    for idx, method in enumerate(['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC'])
+                    for idx, method in enumerate(['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC'])
                 },
                 'total_true_positives': {
                     method: query_results['TP'][:, idx].sum() 
-                    for idx, method in enumerate(['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC'])
+                    for idx, method in enumerate(['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC'])
                 },
                 'average_precision': {
                     method: np.mean(query_results['precision'][:, idx][query_results['precision'][:, idx] > 0])
-                    for idx, method in enumerate(['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC'])
+                    for idx, method in enumerate(['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC'])
                 },
                 'average_recall': {
                     method: np.mean(query_results['recall'][:, idx][query_results['recall'][:, idx] > 0])
-                    for idx, method in enumerate(['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC'])
+                    for idx, method in enumerate(['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC'])
                 },
                 'total_query_time': {
                     method: query_results['query_times'][:, idx].sum()
-                    for idx, method in enumerate(['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC'])
+                    for idx, method in enumerate(['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC'])
                 },
                 
                 # NEW: Add geometry statistics
@@ -627,7 +778,7 @@ def save_query_results(all_query_results, output_dir):
                     method: {
                         'shape_type_counts': {
                             shape_type: np.sum(query_results['geometry_info']['shape_types'][:, idx] == shape_type)
-                            for shape_type in ['alphashape', 'convex_hull', '']
+                            for shape_type in ['buffered_alphashape', 'buffered_convex_hull', 'alphashape', 'convex_hull', '']
                         },
                         'average_vertices': np.mean(query_results['geometry_info']['vertex_counts'][:, idx][
                             query_results['geometry_info']['vertex_counts'][:, idx] > 0
@@ -636,9 +787,12 @@ def save_query_results(all_query_results, output_dir):
                             query_results['geometry_info']['areas'][:, idx] > 0
                         ]) if np.any(query_results['geometry_info']['areas'][:, idx] > 0) else 0,
                         'fix_rate': np.mean(query_results['geometry_info']['was_fixed'][:, idx]),
-                        'successful_queries': np.sum(query_results['N_images'][:, idx] >= 0)  # Count non-zero queries
+                        'successful_queries': np.sum(query_results['N_images'][:, idx] >= 0),  # Count non-zero queries
+                        'buffer_usage_rate': np.sum([
+                            'buffered' in shape_type for shape_type in query_results['geometry_info']['shape_types'][:, idx]
+                        ]) / len(query_results['geometry_info']['shape_types'][:, idx])
                     }
-                    for idx, method in enumerate(['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC'])
+                    for idx, method in enumerate(['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC'])
                 }
             }
         }
@@ -700,7 +854,7 @@ def save_query_results(all_query_results, output_dir):
     # Also save a combined summary CSV with all arcs
     if all_query_results:
         combined_summary_data = []
-        methods = ['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC']
+        methods = ['DAIOD_DA', 'DAIOD_ADS_DA', 'DAIOD_MC', 'GAUSS_MC']
         
         for arc_idx, result_data in all_query_results.items():
             arc_data = result_data['arc_data']
@@ -747,7 +901,7 @@ def save_query_results(all_query_results, output_dir):
 
 def main():
     """Main query processing function"""
-    
+    t_required = Time(["2005-05-17 01:20:55","2005-04-17 01:20:55","2005-03-17 01:20:55", "2005-02-17 01:20:55","2005-01-18 01:16:50", "2005-01-17 01:19:11"], scale='utc')       #Timestamps of SSOIS images
     print("=== Apophis Query Processing ===")
     
     # Load all simulation data
@@ -762,11 +916,12 @@ def main():
         arc_data = all_arc_data[arc_index]
         
         try:
-            query_results = run_queries_for_arc(arc_data, arc_index)
+            query_results, query_processing_info = run_queries_for_arc(arc_data, arc_index)
             
             all_query_results[arc_index] = {
                 'arc_data': arc_data,
-                'query_results': query_results
+                'query_results': query_results,
+                'query_processing_info': query_processing_info
             }
             
             print(f"✓ Completed Arc {arc_index}")

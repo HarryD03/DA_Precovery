@@ -115,10 +115,10 @@ def DAIOD_ADS_full(RA_rad, DEC_rad, RA_sigma_rad, DEC_sigma_rad, observer_positi
     DEC_DA = array([DEC_rad[i] + 3*DEC_sigma_rad*DA(i + 4) for i in range(3)])
     
     # Set tolerances to be a fraction of the maximum variation
-    pos_tol = 1e-3  # Pirovano Defined 1km
-    vel_tol = 1e-3  # Priovano Defined 1m/s
+    pos_tol = 10  # Pirovano Defined 1km
+    vel_tol = 0.1  # Pirovano Defined 1m/s
 
-    nsplits_limit = 10  # Pirovano Defined 10 splits max
+    nsplits_limit = 4  # Pirovano Defined 5 splits max
 
     domain0 = RA_DA.concat(DEC_DA)
 
@@ -126,8 +126,12 @@ def DAIOD_ADS_full(RA_rad, DEC_rad, RA_sigma_rad, DEC_sigma_rad, observer_positi
     init_list = [init_domain]
     tol = np.array([pos_tol, pos_tol, pos_tol, vel_tol, vel_tol, vel_tol])
     #Conduct ADS
-    final_list = ADS.eval(init_list, tol, nsplits_limit, lambda domain: DAIODfunc(domain, observer_position, time_observation_seconds, mu, order, prograde))
-
+    try:
+        final_list = ADS.eval(init_list, tol, nsplits_limit, lambda domain: DAIODfunc(domain, observer_position, time_observation_seconds, mu, order, prograde))
+    except Exception as e:
+        print(f"ADS failed: {e}")
+        return
+    
     print(f"ADS completed. Number of final domains: {len(final_list)}")
 
     X0_CC_epoch_ADS = final_list
@@ -639,7 +643,7 @@ def DAIOD_1Scipy_invert(range_mag_guass: float, i_rho: np.ndarray, t_obs_s: np.n
     print(f"Initial guess for fsolve: {range_mag_guass}")
  
     range_mag_L1_nom = fsolve(f_scipy, range_mag_guass, xtol=tol)
-    if np.any(range_mag_L1_nom < 0) < 0:
+    if np.any(range_mag_L1_nom < 0):
         raise ValueError("fsolve converged to a negative range value, which is non-physical. Change Prograde Orbit condition")
     
     if order is None:
@@ -825,21 +829,20 @@ def DAIOD_2(range_mag: array, RA, DEC, t_obs_s: array, order, r_obs_heliocentric
     J_dv_p = F0.linear()   # Extract the Jacobian w.r.t. RA and DEC
 
     M = - Jinv_DA @ J_dv_p                      # Sensitivity Matrix (new)
-    tmp = array([DA(1+i) for i in range(6)])  # Create DA array for RA and DEC variations (new)
-    rho_map = x0 + M @ tmp  # Range Map (new)
+    tmp =  array.identity(6) # Create DA array for RA and DEC variations (new) p - p.cons()
+    rho_map = x0 + (M @ tmp)  # Range Map (new)
 
     i = 1
     for _ in range(iterMax):
         if i <= iterMax:
             F = f1(rho_map, p)         #Evaluate the function to get the residuals, Old (working version) is to use x0 as rho_map
-            dF = F - F.cons()
+            dF = F - F.cons()                # Delta F
             dx = - (Jinv_DA @ dF)
             if np.any(dx.cons(), axis=0):
                 dx -= dx.cons()  # Ensure zero constant term
             
             rho_map = rho_map + dx  #Newton Step
             i *= 2
-            # x0 = x1
         else:
             break
 
@@ -924,14 +927,7 @@ def position_feasibility(r1: NDArray[np.double], r2: NDArray[np.double], r3: NDA
 
     d_earth_sun = 1.496e+8  # Earth-Sun distance in kilometers, used for feasibility checks ( 1AU)
     # Test 1a: norm r < Earth Sun distance
-    if mu == 1.32712440018e11:
-        if np.linalg.norm(r1) <= d_earth_sun or np.linalg.norm(r2) <= d_earth_sun or np.linalg.norm(r3) <= d_earth_sun:
-            r1[:] = np.nan
-            r2[:] = np.nan
-            r3[:] = np.nan
-            v2[:] = np.nan
-            raise ValueError("Position vectors r1 and r2 must be greater than distance of Earth as night time viewing).")
-    elif mu == 3.986e5:
+    if mu == 3.986e5:
         if np.linalg.norm(r1) <= Re or np.linalg.norm(r2) <= Re or np.linalg.norm(r3) <= Re:
             r1[:] = np.nan
             r2[:] = np.nan
@@ -1025,7 +1021,6 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
     #Inform user of real roots values, and conduct pruning if more than 1 real root
     r_2_mag = real_roots.real                                                #Store possible solutions of r_2
     if len(real_roots.real) > 0:
-        print("There are more than 1 positive real roots.")
         range_1_mag = np.zeros((len(real_roots)))   # columns are different root value, rows are [x,y,z] components            #topocentric ranges
         range_2_mag = np.zeros((len(real_roots)))               #topocentric ranges
         range_3_mag = np.zeros((len(real_roots)))               #topocentric ranges
@@ -1106,9 +1101,7 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
 
             if not (np.isnan(r_1[:,i]).any() or np.isnan(r_2[:,i]).any() or np.isnan(r_3[:,i]).any() or np.isnan(v_2).any()):
                 print(f"Feasibility passed for root {i}:")
-                print(f"  r_1: {r_1[:,i]}")
-                print(f"  r_2: {r_2[:,i]}")
-                print(f"  r_3: {r_3[:,i]}")
+
 
                 range_1 = range_1_mag[i] * obs_dir[:,0]  #convert range to vector
                 range_2 = range_2_mag[i] * obs_dir[:,1]  #convert range to vector
@@ -1118,9 +1111,7 @@ def Guass_8th_seed(pos_obs: NDArray, obs_dir: NDArray, t: NDArray, mu=1.32712440
                 break   #exit loop on first feasible root
             else:
                 print(f"Feasibility failed for root {i}:")
-                print(f"  r_1: {r_1[:,i]}")
-                print(f"  r_2: {r_2[:,i]}")
-                print(f"  r_3: {r_3[:,i]}")
+
 
                 range_1 = np.full((3, 1), np.nan)
                 range_2 = np.full((3, 1), np.nan)

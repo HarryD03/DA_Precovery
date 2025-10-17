@@ -1,0 +1,2 @@
+arc_index,dt_days,obs_time_center,prop_start,prop_end,n_time_steps,total_processing_time_sec,oda_ads_time,oda_da_time,mc_time,save_path,timestamp
+3,0.5,2005-06-17 23:41:07.000,2005-06-17 23:41:07.000,2004-12-16 23:41:07.000,189,17035.176501989365,365.6614420413971,303.57851576805115,16006.206800460815,c:\Users\chezh\OneDrive - Cranfield University\Documents\IRP\05_Thesis_code\main_scripts\Simulation_data\arc_003_dt_0.500d_complete_results_20250928_020039.pkl,20250928_020039

@@ -8,7 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.spatial import ConvexHull
-from astropy.time import Time
+from astropy.time import Time, TimeDelta
 from astropy import units as u
 from daceypy import DA, ADS, array
 
@@ -25,12 +25,47 @@ sns.set_palette("husl")
 plt.rcParams['figure.figsize'] = (12, 8)
 plt.rcParams['font.size'] = 12
 
+def setup_plot_directory(plot_type):
+    """Create plot directory structure and return the path"""
+    script_dir = Path(__file__).parent
+    plot_dir = script_dir / "Plots" / plot_type
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    return plot_dir
+
+def generate_plot_filename(plot_type, base_name, extension='png', timestamp=True):
+    """Generate standardized filename for plots"""
+    if timestamp:
+        from datetime import datetime
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{base_name}_{timestamp_str}.{extension}"
+    else:
+        filename = f"{base_name}.{extension}"
+    
+    plot_dir = setup_plot_directory(plot_type)
+    return plot_dir / filename
+
+def save_figure_with_metadata(fig, filepath, dpi=300, bbox_inches='tight'):
+    """Save figure with consistent settings and metadata"""
+    try:
+        fig.savefig(filepath, dpi=dpi, bbox_inches=bbox_inches, 
+                   facecolor='white', edgecolor='none')
+        print(f"Saved plot: {filepath}")
+        return True
+    except Exception as e:
+        print(f"Error saving plot to {filepath}: {e}")
+        return False
+
 def load_da_params_for_arc(arc_index, simulation_data_dir):
     """Load DA parameters for a specific arc to initialize DA before loading main data"""
     
-    # Find DA parameters file for this arc
-    da_params_pattern = str(simulation_data_dir / f"arc_{arc_index:03d}_da_params_*.pkl")
-    da_params_files = glob.glob(da_params_pattern)
+    # Find DA parameters file for this arc - check Query_data first, then Simulation_data
+    query_data_dir = simulation_data_dir.parent / "Query_data"
+    da_params_pattern_query = str(query_data_dir / f"arc_{arc_index:03d}_formatted_da_params_*.pkl")
+    da_params_pattern_sim = str(simulation_data_dir / f"arc_{arc_index:03d}_da_params_*.pkl")
+    
+    da_params_files = glob.glob(da_params_pattern_query)
+    if not da_params_files:
+        da_params_files = glob.glob(da_params_pattern_sim)
     
     if not da_params_files:
         print(f"No DA parameters file found for arc {arc_index}")
@@ -77,19 +112,26 @@ def load_query_results():
     simulation_data_dir = script_dir / "Simulation_data"  # For DA params
     
     # Find all individual arc query result files
-    pattern = str(query_data_dir / "arc_*_query_results_*.pkl")
+    # Updated pattern to match format_for_plots.py output: arc_XXX_dt_X.XXXd_formatted_results_TIMESTAMP.pkl
+    pattern = str(query_data_dir / "arc_*_dt_*_formatted_results_*.pkl")
     result_files = glob.glob(pattern)
     
     if not result_files:
         print("No individual arc query result files found!")
         print(f"Looked in: {query_data_dir}")
+        print(f"Looking for pattern: arc_*_dt_*_formatted_results_*.pkl")
         return None
     
     print(f"Found {len(result_files)} individual arc query result files")
     
     # Find all DA parameter files to initialize DA properly
-    da_params_pattern = str(simulation_data_dir / "arc_*_da_params_*.pkl")
-    da_params_files = glob.glob(da_params_pattern)
+    # First try Query_data directory (from format_for_plots.py), then Simulation_data
+    da_params_pattern_query = str(query_data_dir / "arc_*_formatted_da_params_*.pkl")
+    da_params_pattern_sim = str(simulation_data_dir / "arc_*_da_params_*.pkl")
+    
+    da_params_files = glob.glob(da_params_pattern_query)
+    if not da_params_files:
+        da_params_files = glob.glob(da_params_pattern_sim)
     
     if not da_params_files:
         print("No DA parameter files found! Using default DA initialization.")
@@ -121,7 +163,7 @@ def load_query_results():
     
     for result_file in sorted(result_files):
         try:
-            # Extract arc index from filename like "arc_000_query_results_*.pkl"
+            # Extract arc index from filename like "arc_000_dt_0.180d_formatted_results_*.pkl"
             filename = Path(result_file).name
             arc_idx = int(filename.split('_')[1])
             
@@ -142,11 +184,17 @@ def load_query_results():
 def extract_data_for_plotting(all_query_results):
     """Extract and organize data for plotting"""
     
-    methods = ['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC']
-    method_colors = {'DAIOD_ADS_ADS': 'red', 'DAIOD_ADS': 'blue', 'DAIOD_DA': 'green', 
+    # Updated methods to match stored structure: ['DAIOD_ADS_DA', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC']
+    methods = ['DAIOD_ADS_DA', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC']
+    # methods = ['DAIOD_ADS_ADS', 'DAIOD_ADS', 'DAIOD_DA', 'DAIOD_MC', 'GAUSS_MC']  # Old methods list
+    method_colors = {'DAIOD_ADS_DA': 'red', 'DAIOD_DA': 'green', 
                      'DAIOD_MC': 'orange', 'GAUSS_MC': 'purple'}
-    method_markers = {'DAIOD_ADS_ADS': 'o', 'DAIOD_ADS': 's', 'DAIOD_DA': '^', 
+    # method_colors = {'DAIOD_ADS_ADS': 'red', 'DAIOD_ADS': 'blue', 'DAIOD_DA': 'green', 
+    #                  'DAIOD_MC': 'orange', 'GAUSS_MC': 'purple'}  # Old method colors
+    method_markers = {'DAIOD_ADS_DA': 'o', 'DAIOD_DA': '^', 
                       'DAIOD_MC': 'D', 'GAUSS_MC': 'v'}
+    # method_markers = {'DAIOD_ADS_ADS': 'o', 'DAIOD_ADS': 's', 'DAIOD_DA': '^', 
+    #                   'DAIOD_MC': 'D', 'GAUSS_MC': 'v'}  # Old method markers
     
     # Collect all data
     plot_data = []
@@ -157,7 +205,10 @@ def extract_data_for_plotting(all_query_results):
         
         dt_days = arc_data['current_dt']
         method_clock_time = arc_data['Method_Clock_time']
-        
+        # restructure method_clock_time 
+        method_clock_time[2,2] = method_clock_time[2,1]
+        method_clock_time = np.delete(method_clock_time, 1, axis=0) 
+
         # Get propagation times in days
         t_prop = arc_data['t_propagation']
         tgrid = arc_data['tgrid']
@@ -166,8 +217,8 @@ def extract_data_for_plotting(all_query_results):
         for time_idx in range(len(prop_times_days)):
             for method_idx, method_name in enumerate(methods):
                 
-                # Calculate total wall clock time (OD + Prop + Eval + Query)
-                total_wall_time = (method_clock_time[method_idx, :4].sum() + 
+                # Calculate total wall clock time (OD + Prop + + conversion + eval + alphashape + Query)
+                total_wall_time = (method_clock_time[method_idx, :5].sum() + 
                                  query_results['query_times'][time_idx, method_idx])
                 
                 plot_data.append({
@@ -190,6 +241,8 @@ def extract_data_for_plotting(all_query_results):
                     'od_time': method_clock_time[method_idx, 0],
                     'prop_time': method_clock_time[method_idx, 1],
                     'eval_time': method_clock_time[method_idx, 2],
+                    'conversion_time': method_clock_time[method_idx, 3],
+                    'alphashape_time': method_clock_time[method_idx, 4],
                     'query_time': query_results['query_times'][time_idx, method_idx]
                 })
     
@@ -232,10 +285,31 @@ def plot_parameter_heatmaps(df, methods):
             ax.set_ylabel('Arc Length [days]')
     
     plt.tight_layout()
+    
+    # Save the figure
+    filepath = generate_plot_filename('parameter_heatmaps', 'arc_vs_prop_time_heatmaps')
+    save_figure_with_metadata(fig, filepath)
+    
     plt.show()
 
-def plot_radec_propagation(all_query_results, methods, method_colors):
-    """Plot RA×DEC propagated states with separate figures for each method and arc length combination"""
+def plot_radec_propagation(all_query_results, methods, method_colors, selected_times=None):
+    """Plot RA×DEC alpha shapes at selected time instances with separate figures for each method
+    
+    Parameters:
+    -----------
+    all_query_results : dict
+        Dictionary containing query results for all arcs
+    methods : list
+        List of method names to plot
+    method_colors : dict
+        Dictionary mapping method names to colors
+    selected_times : list, optional
+        List of time instances to plot. Can be either:
+        - List of seconds from start (int/float): [0, 60, 300, 600, ...]
+        - List of Time objects: [Time('2029-04-13T21:46:00'), Time('2029-04-13T21:47:00'), ...]
+        - List of ISO strings: ['2029-04-13T21:46:00', '2029-04-13T21:47:00', ...]
+        Default: [0, 60, 300, 600, 1200, 1800, 3600] (0s, 1min, 5min, 10min, 20min, 30min, 1hr)
+    """
     
     # Get arc information
     arc_info = {}
@@ -250,166 +324,532 @@ def plot_radec_propagation(all_query_results, methods, method_colors):
     arc_lengths = [f"{info['dt_days']:.2f}d" for info in arc_info.values()]
     print(f"Found {len(arc_info)} arcs with lengths: {arc_lengths}")
     
-    # Determine number of time steps to show (use all time steps for time series)
+    # Use default selected time instances if not provided
+    if selected_times is None:
+        # Use 52 equally spaced time steps from the total propagation time array
+        sample_arc_data, _ = get_arc_data(list(all_query_results.values())[0])
+        total_time_steps = len(sample_arc_data['tgrid'])
+        
+        # Create 52 equally spaced indices across the full time range
+        if total_time_steps >= 52:
+            time_indices = np.linspace(0, total_time_steps-1, 52, dtype=int)
+        else:
+            time_indices = np.arange(total_time_steps)  # Use all available if less than 52
+        
+        # Convert indices to actual Time objects
+        selected_times = [sample_arc_data['t_propagation'][i] for i in time_indices]
+    
+    # Get reference time grid from first arc
     sample_arc_data, _ = get_arc_data(list(all_query_results.values())[0])
     total_time_steps = len(sample_arc_data['tgrid'])
-    all_time_indices = list(range(total_time_steps))
+    t_prop_ref = sample_arc_data['t_propagation']
+    t_start_ref = t_prop_ref[0]  # Reference start time
     
-    print(f"Showing complete time series with {total_time_steps} time steps")
+    print(f"Total time steps available: {total_time_steps}")
+    print(f"Reference start time: {t_start_ref.iso}")
+    
+    # Convert selected_times to delta t values and Time objects
+    # NOTE: Propagation goes BACKWARD in time (into the past)
+    selected_times_processed = []
+    selected_deltat_sec = []
+    
+    for selected_time in selected_times:
+        if isinstance(selected_time, (int, float)):
+            # Input is delta t in seconds (positive values go backward in time)
+            delta_t_sec = float(selected_time)
+            target_time = t_start_ref - TimeDelta(delta_t_sec, format='sec')  # SUBTRACT for backward propagation
+        elif isinstance(selected_time, str):
+            # Input is ISO string
+            target_time = Time(selected_time)
+            delta_t_sec = (t_start_ref - target_time).sec  # Positive delta_t = further into past
+        elif hasattr(selected_time, 'iso'):
+            # Input is Time object
+            target_time = selected_time
+            delta_t_sec = (t_start_ref - target_time).sec  # Positive delta_t = further into past
+        else:
+            print(f"Warning: Unrecognized time format: {selected_time}, skipping")
+            continue
+        
+        selected_times_processed.append(target_time)
+        selected_deltat_sec.append(delta_t_sec)
+    
+    print(f"Selected time instances (delta t): {[f'{dt:.0f}s' for dt in selected_deltat_sec]}")
+    print(f"Selected time instances (absolute): {[t.iso for t in selected_times_processed]}")
     
     # Load true Apophis data for comparison
     try:
-        t_prop_full = sample_arc_data['t_propagation']
-        
         # Get true Apophis ephemeris for the full time range
+        # Note: t_prop_ref is in descending order (backward propagation), so t_prop_ref[-1] is earliest
+        t_earliest = t_prop_ref[-1]  # Last element = earliest time (furthest into past)
+        t_latest = t_prop_ref[0]     # First element = latest time (closest to observation)
+        
         eph_true, _ = post.load_Apophis_Ephemeris(
-            t_prop_full[0].iso, t_prop_full[-1].iso, '30min'
+            t_earliest.iso, t_latest.iso, '10min'  # Higher resolution for better interpolation
         )
         ra_true = eph_true['RA'].to(u.deg).value
         dec_true = eph_true['DEC'].to(u.deg).value
+        # Convert datetime strings to Time objects - handle both single strings and arrays
+        t_true = Time(eph_true['datetime_jd'], format='jd')
         
     except Exception as e:
         print(f"Could not load true Apophis data: {e}")
-        ra_true = dec_true = None
+        ra_true = dec_true = t_true = None
     
-    # Create separate figure for each method and arc length combination
+    # Create arc color mapping
+    arc_colors = plt.cm.Set1(np.linspace(0, 1, len(arc_info)))
+    arc_color_map = {arc_idx: arc_colors[i] for i, arc_idx in enumerate(sorted(arc_info.keys()))}
+    
+    # Create method title mapping
+    method_titles = {
+        'DAIOD_ADS_DA': 'DAIOD+ADS Orbit Determination, DA propagation',
+        'DAIOD_DA': 'DAIOD Orbit Determination, DA Propagation',
+        'DAIOD_MC': 'DAIOD Monte Carlo Orbit Determination, Pointwise Propagation',
+        'GAUSS_MC': 'Gauss Monte Carlo Orbit Determination, Pointwise Propagation'
+    }
+    # method_titles = {
+    #     'DAIOD_ADS_ADS': 'DAIOD+ADS Orbit Determination, ADS propagation',
+    #     'DAIOD_ADS': 'DAIOD Orbit Determination, ADS propagation',
+    #     'DAIOD_DA': 'DAIOD Orbit Determination, DA Propagation',
+    #     'DAIOD_MC': 'DAIOD Monte Carlo Orbit Determination, Pointwise Propagation',
+    #     'GAUSS_MC': 'Gauss Monte Carlo Orbit Determination, Pointwise Propagation'
+    # }  # Old method titles
+    
+    # Group time instances into sets of 5 for multiple figures
+    timesteps_per_figure = 5
+    n_figures = (len(selected_times_processed) + timesteps_per_figure - 1) // timesteps_per_figure
+    
+    # Create separate figure for each method
     for method in methods:
-        for arc_idx, result_data in all_query_results.items():
-            arc_data, _ = get_arc_data(result_data)
-            dt_days = arc_data['current_dt']
-            t_prop = arc_data['t_propagation']
+        print(f"Creating {n_figures} figures for method {method}")
+        
+        # Create multiple figures, each with 5 timesteps
+        for fig_idx in range(n_figures):
+            start_idx = fig_idx * timesteps_per_figure
+            end_idx = min(start_idx + timesteps_per_figure, len(selected_times_processed))
             
-            # Create single figure for this method-arc combination showing time evolution
-            fig, ax = plt.subplots(figsize=(12, 10))
-            fig.suptitle(f'{method} - RA×DEC Time Series\nArc Length: {dt_days:.2f} days, Arc #{arc_idx}', 
-                        fontsize=14, y=0.95)
+            current_times = selected_times_processed[start_idx:end_idx]
+            current_deltas = selected_deltat_sec[start_idx:end_idx]
+            
+            plt.figure(figsize=(14, 10))
+            
+            # Create time range string for title
+            first_time = current_times[0]
+            last_time = current_times[-1]
+            time_range_str = f"{first_time.iso[:19]} to {last_time.iso[:19]}"
+            
+            plt.suptitle(f'{method_titles.get(method, method)} - RA×DEC Alpha Shapes\nFigure {fig_idx+1}/{n_figures} | Time range: {time_range_str}', 
+                        fontsize=16, y=0.95)
+            
+            legend_elements = []
             
             try:
-                # Extract RA/DEC points and alphashapes for this method
-                ra_dec_points = arc_data['ra_dec_points'][method]
-                ra_dec_alphashapes = arc_data.get('ra_dec_alphashapes', {}).get(method, [])
-                
-                # Plot time evolution on single axes
-                for time_idx in all_time_indices:
-                    if time_idx < len(ra_dec_points):
-                        points = ra_dec_points[time_idx]
-                        
-                        if points is not None and len(points) > 0:
-                            # Color based on time progression
-                            time_fraction = time_idx / (len(all_time_indices) - 1) if len(all_time_indices) > 1 else 0
-                            alpha_val = 0.3 + 0.5 * time_fraction  # Fade from light to darker
-                            
-                            # Plot scatter points (no individual labels to avoid clutter)
-                            scatter = ax.scatter(points[:, 0], points[:, 1], 
-                                               c=time_fraction, cmap='plasma', 
-                                               alpha=alpha_val, s=1,
-                                               vmin=0, vmax=1)
-                            
-                            # Overlay alpha shape if available - only for selected time steps to avoid clutter
-                            step_interval = max(1, len(all_time_indices)//5) if len(all_time_indices) > 5 else 1
-                            if (time_idx % step_interval == 0 and 
-                                time_idx < len(ra_dec_alphashapes)):
-                                alphashape = ra_dec_alphashapes[time_idx]
-                                if alphashape is not None and hasattr(alphashape, 'exterior'):
-                                    # Extract boundary coordinates
-                                    boundary_coords = np.array(alphashape.exterior.coords)
-                                    
-                                    # Plot alpha shape boundary
-                                    ax.plot(boundary_coords[:, 0], boundary_coords[:, 1], 
-                                           color=plt.cm.plasma(time_fraction), linewidth=1.5, 
-                                           alpha=0.8, linestyle='-')
-                
-                # Add colorbar to show time progression
-                sm = plt.cm.ScalarMappable(cmap='plasma', norm=plt.Normalize(vmin=0, vmax=1))
-                sm.set_array([])
-                cbar = plt.colorbar(sm, ax=ax, label='Time Progression (0=Start, 1=End)')
-                
-                # Plot true Apophis trajectory if available
-                if ra_true is not None:
-                    # Subsample true trajectory for clarity
-                    n_true_points = min(len(ra_true), 50)
-                    true_indices = np.linspace(0, len(ra_true)-1, n_true_points, dtype=int)
+                # For each selected time instance in this figure
+                for i, (target_time, delta_t_sec) in enumerate(zip(current_times, current_deltas)):
                     
-                    ax.plot(ra_true[true_indices], dec_true[true_indices], 
-                           'k-', linewidth=2, label='True Apophis Trajectory', zorder=10, alpha=0.8)
-                    ax.scatter(ra_true[true_indices[0]], dec_true[true_indices[0]], 
-                             c='green', marker='*', s=150, label='True Start', zorder=11)
-                    ax.scatter(ra_true[true_indices[-1]], dec_true[true_indices[-1]], 
-                             c='red', marker='*', s=150, label='True End', zorder=11)
+                    # Find true Apophis position at this time
+                    true_ra_at_time = None
+                    true_dec_at_time = None
+                    
+                    if ra_true is not None:
+                        # Find closest time in true ephemeris
+                        time_diffs = np.abs((t_true - target_time).sec)
+                        closest_true_idx = np.argmin(time_diffs)
+                        
+                        true_ra_at_time = ra_true[closest_true_idx]
+                        true_dec_at_time = dec_true[closest_true_idx]
+                    
+                    # Plot alpha shapes for each arc at this time
+                    for arc_idx, result_data in all_query_results.items():
+                        arc_data, _ = get_arc_data(result_data)
+                        dt_days = arc_data['current_dt']
+                        t_prop = arc_data['t_propagation']
+                        
+                        # Find closest time index in this arc's time grid
+                        time_diffs = np.abs((t_prop - target_time).sec)
+                        closest_time_idx = np.argmin(time_diffs)
+                        actual_time_diff = time_diffs[closest_time_idx]
+                        
+                        # Skip if time difference is too large (more than 30 seconds)
+                        if actual_time_diff > 30:
+                            continue
+                        
+                        # Get alpha shapes for this method and time
+                        ra_dec_alphashapes = arc_data.get('alphashapes', {}).get(method, [])
+                        
+                        if closest_time_idx < len(ra_dec_alphashapes):
+                            alphashape = ra_dec_alphashapes[closest_time_idx]
+                            
+                            if alphashape is not None and hasattr(alphashape, 'exterior'):
+                                # Extract boundary coordinates
+                                boundary_coords = np.array(alphashape.exterior.coords)
+                                
+                                # Plot alpha shape boundary
+                                line_alpha = 0.7 if delta_t_sec == 0 else 0.6  # First time more prominent
+                                line_width = 2.0 if delta_t_sec == 0 else 1.5
+                                
+                                plt.plot(boundary_coords[:, 0], boundary_coords[:, 1], 
+                                       color=arc_color_map[arc_idx], linewidth=line_width, 
+                                       alpha=line_alpha, linestyle='-')
+                        
+                        print(f"Plotted arc {arc_idx} at Δt={delta_t_sec:.0f}s (closest match: {actual_time_diff:.1f}s)")
+                    
+                    # Plot true Apophis position at this time instance with smaller marker
+                    if true_ra_at_time is not None and true_dec_at_time is not None:
+                        marker_size = 30 if delta_t_sec == 0 else 20  # Reduced from 100/60 to 30/20
+                        plt.scatter(true_ra_at_time, true_dec_at_time, 
+                                 c='black', marker='x', s=marker_size, linewidth=1.5,
+                                 zorder=10, alpha=0.9)
+                        
+                        # Add delta t annotation at true Apophis position
+                        if abs(delta_t_sec) < 60:
+                            time_label = f'{delta_t_sec:.0f}s'
+                        elif abs(delta_t_sec) < 3600:
+                            time_label = f'{delta_t_sec/60:.1f}min'
+                        else:
+                            time_label = f'{delta_t_sec/3600:.1f}hr'
+                        
+                        # Offset annotation slightly to avoid overlap with marker
+                        plt.annotate(time_label, (true_ra_at_time, true_dec_at_time), 
+                                   xytext=(8, 8), textcoords='offset points',
+                                   fontsize=10, color='black', weight='bold',
+                                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8),
+                                   zorder=11)
                 
-                ax.set_xlabel('RA [deg]')
-                ax.set_ylabel('DEC [deg]')
-                ax.grid(True, alpha=0.3)
-                ax.legend(bbox_to_anchor=(1.15, 1), loc='upper left')
+                # Create legend for arc lengths (only once per figure)
+                for arc_idx in sorted(arc_info.keys()):
+                    dt_days = arc_info[arc_idx]['dt_days']
+                    legend_elements.append(plt.Line2D([0], [0], color=arc_color_map[arc_idx], 
+                                                     linewidth=2, alpha=0.7, 
+                                                     label=f'Arc {arc_idx}: {dt_days:.2f}d'))
+                
+                # Add true Apophis to legend
+                legend_elements.append(plt.Line2D([0], [0], marker='x', color='black', 
+                                                linewidth=0, markersize=6, markeredgewidth=1.5,
+                                                label='True Apophis'))
+                
+                plt.xlabel('RA [deg]')
+                plt.ylabel('DEC [deg]')
+                plt.grid(True, alpha=0.3)
+                plt.legend(handles=legend_elements, loc='upper right')
+                
+                # Set fixed axis limits for full celestial coordinate range
                 
                 # Set equal aspect ratio for proper sky projection
-                ax.set_aspect('equal', adjustable='box')
-                
-                # Add time range info to the plot
-                time_start = t_prop[0].iso[:19]
-                time_end = t_prop[-1].iso[:19]
-                ax.text(0.02, 0.98, f'Time Range:\n{time_start}\nto\n{time_end}', 
-                       transform=ax.transAxes, verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-                
+                plt.gca().set_aspect('equal', adjustable='box')
+                    
             except Exception as e:
-                print(f"Error plotting {method} arc {arc_idx}: {e}")
-                ax.text(0.5, 0.5, f'Error plotting {method} arc {arc_idx}:\n{str(e)}', 
-                       transform=ax.transAxes, ha='center', va='center')
+                print(f"Error plotting {method} figure {fig_idx+1}: {e}")
+                plt.text(0.5, 0.5, f'Error plotting {method}:\n{str(e)}', 
+                       transform=plt.gca().transAxes, ha='center', va='center')
             
             plt.tight_layout()
-            plt.subplots_adjust(top=0.90, right=0.85)
-            plt.show()
+            plt.subplots_adjust(top=0.88)
+            
+            # Save the figure
+            first_time = current_times[0].iso[:19].replace(':', '-')
+            last_time = current_times[-1].iso[:19].replace(':', '-')
+            filename = f"radec_propagation_{method}_fig{fig_idx+1}_{first_time}_to_{last_time}"
+            filepath = generate_plot_filename('radec_propagation', filename, timestamp=False)
+            save_figure_with_metadata(plt.gcf(), filepath)
+            
+            plt.close()
+        
+        print(f"Completed {n_figures} figures for method {method}")
 
-def plot_range_rangerate_phase_space(all_query_results, methods, method_colors):
-    """Plot Range×Range-rate phase space for all methods at each time step"""
+def plot_alphashape_area(all_query_results, methods, method_colors):
+    """Plot alphashape area evolution over propagation time for each method
     
-    # Get the number of time steps from first arc
-    arc_data, _ = get_arc_data(list(all_query_results.values())[0])
-    n_time_steps = len(arc_data['tgrid'])
+    Creates separate figures for each arc length, showing how the uncertainty
+    region area changes over time for different orbital determination methods.
+    Uses pre-computed alphashape areas stored in arc_data.
+    """
     
-    # Create subplots for each time step
-    n_cols = min(3, n_time_steps)
-    n_rows = (n_time_steps + n_cols - 1) // n_cols
+    # Method title mapping
+    method_titles = {
+        'DAIOD_ADS_DA': 'DAIOD+ADS Orbit Determination, DA propagation',
+        'DAIOD_DA': 'DAIOD Orbit Determination, DA Propagation',
+        'DAIOD_MC': 'DAIOD Monte Carlo Orbit Determination, Pointwise Propagation',
+        'GAUSS_MC': 'Gauss Monte Carlo Orbit Determination, Pointwise Propagation'
+    }
+    # method_titles = {
+    #     'DAIOD_ADS_ADS': 'DAIOD+ADS Orbit Determination, ADS propagation',
+    #     'DAIOD_ADS': 'DAIOD Orbit Determination, ADS propagation',
+    #     'DAIOD_DA': 'DAIOD Orbit Determination, DA Propagation',
+    #     'DAIOD_MC': 'DAIOD Monte Carlo Orbit Determination, Pointwise Propagation',
+    #     'GAUSS_MC': 'Gauss Monte Carlo Orbit Determination, Pointwise Propagation'
+    # }  # Old method titles
     
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
+    # Method marker shapes
+    method_markers = {
+        'DAIOD_ADS_DA': 'o',       # Circle
+        'DAIOD_DA': '^',           # Triangle up
+        'DAIOD_MC': 'D',           # Diamond
+        'GAUSS_MC': 'v'            # Triangle down
+    }
+    # method_markers = {
+    #     'DAIOD_ADS_ADS': 'o',      # Circle
+    #     'DAIOD_ADS': 's',          # Square
+    #     'DAIOD_DA': '^',           # Triangle up
+    #     'DAIOD_MC': 'D',           # Diamond
+    #     'GAUSS_MC': 'v'            # Triangle down
+    # }  # Old method markers
     
-    # Ensure axes is always iterable
-    if n_time_steps == 1:
-        axes = [axes]
-    elif n_rows == 1 and n_cols == 1:
-        axes = [axes]  
-    elif n_rows == 1:
-        axes = list(axes) if hasattr(axes, '__iter__') else [axes]
-    else:
-        axes = axes.flatten()
+    # Method line styles - each method has unique line pattern
+    method_linestyles = {
+        'DAIOD_ADS_DA': '--',      # Dashed
+        'DAIOD_DA': ':',           # Dotted
+        'DAIOD_MC': '-',           # Solid
+        'GAUSS_MC': '-.'           # Dash-dot
+    }
+    # method_linestyles = {
+    #     'DAIOD_ADS_ADS': '--',     # Dashed
+    #     'DAIOD_ADS': '-.',         # Dash-dot
+    #     'DAIOD_DA': ':',           # Dotted
+    #     'DAIOD_MC': '--',          # Dashed
+    #     'GAUSS_MC': '-.'           # Dash-dot
+    # }  # Old method line styles
     
-    # Skip true Apophis range data for now (requires additional conversion functions)
-    apophis_true_obs = None
+    # Group arcs by arc length for separate figures
+    arc_groups = {}
+    for arc_idx, result_data in all_query_results.items():
+        arc_data, _ = get_arc_data(result_data)
+        dt_days = arc_data['current_dt']
+        
+        # Round to avoid floating point precision issues
+        dt_key = round(dt_days, 3)
+        if dt_key not in arc_groups:
+            arc_groups[dt_key] = []
+        arc_groups[dt_key].append(arc_idx)
     
-    for time_idx in range(n_time_steps):
-        if time_idx < len(axes):
-            ax = axes[time_idx]
+    # Create separate figure for each arc length
+    for dt_days, arc_indices in arc_groups.items():
+        plt.figure(figsize=(12, 8))
+        plt.title(f'Uncertainty Region Area Evolution - Arc Length: {dt_days:.3f} days', 
+                 fontsize=14, pad=20)
+        
+        # Debug: Check what methods are available in the first arc
+        first_arc_data, _ = get_arc_data(all_query_results[arc_indices[0]])
+        if 'alphashape_areas' in first_arc_data:
+            available_methods = list(first_arc_data['alphashape_areas'].keys())
+            print(f"Available methods in alphashape_areas: {available_methods}")
+            print(f"Expected methods: {methods}")
         else:
-            continue
-            
-        # Plot each method at this time step
+            print("No alphashape_areas found in first arc")
+        
+        # Process each method
         for method_idx, method in enumerate(methods):
+            method_areas = []
+            method_times = []
             
-            for arc_idx, result_data in all_query_results.items():
+            print(f"Processing method: {method}")
+            
+            # Collect data from all arcs with this arc length
+            for arc_idx in arc_indices:
+                result_data = all_query_results[arc_idx]
                 arc_data, _ = get_arc_data(result_data)
                 
+                # Get propagation times (convert to days for x-axis)
+                t_prop = arc_data['t_propagation']
+                prop_times_days = (t_prop - t_prop[0]).to(u.day).value
+                
                 try:
+                    # Extract pre-computed alphashape areas from arc_data
+                    if 'alphashape_areas' in arc_data:
+                        alphashape_areas = arc_data['alphashape_areas']
+                        
+                        # Extract areas for this method using method name as key
+                        if method in alphashape_areas:
+                            time_areas = alphashape_areas[method]
+                            
+                            # Add the areas and corresponding times
+                            method_areas.extend(time_areas)
+                            method_times.extend(prop_times_days[:len(time_areas)])
+                        else:
+                            print(f"Warning: Method '{method}' not found in alphashape_areas for arc {arc_idx}")
+                            print(f"Available methods: {list(alphashape_areas.keys())}")
+                            continue
+                    else:
+                        print(f"Warning: alphashape_areas not found in arc_data for arc {arc_idx}")
+                        continue
+                
+                except Exception as e:
+                    print(f"Error processing {method} for arc {arc_idx}: {e}")
+                    continue
+            
+            # Plot the method data if we have any
+            print(f"Method {method}: Found {len(method_areas)} area values")
+            if method_areas and method_times:
+                # Convert to numpy arrays and sort by time
+                times = np.array(method_times)
+                areas = np.array(method_areas)
+                
+                # Remove NaN values
+                valid_mask = ~np.isnan(areas)
+                times = times[valid_mask]
+                areas = areas[valid_mask]
+                print(f"Method {method}: After removing NaN, {len(areas)} valid values")
+                
+                if len(times) > 0:
+                    # Sort by time
+                    sort_idx = np.argsort(times)
+                    times = times[sort_idx]
+                    areas = areas[sort_idx]
+                    
+                    # Convert times to absolute values since we're going backward in time
+                    times = np.abs(times)
+                    
+                    # Plot as lines with method-specific colors and line styles
+                    plt.plot(times, areas, 
+                             color=method_colors[method],
+                             linestyle=method_linestyles.get(method, '-'),
+                             linewidth=2.5, 
+                             alpha=0.8,
+                             label=method_titles.get(method, method))
+            print(f"Finished processing method: {method}")
+            
+        
+        plt.xlabel('Propagation Time [days]')
+        plt.ylabel('Area of Uncertainty Region [deg²]')
+        plt.axhline(41253/2, color='gray', linestyle='--', label='Half Celestial Sphere Area (20626.5 deg²)')
+        plt.axhline(78.54, color='gray', linestyle=':', label='Sky Survey FOV (Calar Alto Observatory)') # https://link.springer.com/chapter/10.1007/978-94-011-1146-1_11
+        plt.axhline(0.196, color='gray', linestyle='-.', label='Typical FOV (ESO-NTT)') # Example: LSST ~9.6 deg², HST ~0.196 deg²
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.yscale('log')  # Use log scale for area as it can vary widely
+        
+        plt.tight_layout()
+        
+        # Save the figure
+        filename = f"alphashape_area_evolution_arc_{dt_days:.3f}d"
+        filepath = generate_plot_filename('alphashape_area', filename, timestamp=False)
+        save_figure_with_metadata(plt.gcf(), filepath)
+        
+        plt.show()
+
+def plot_range_rangerate_phase_space(all_query_results, methods, method_colors):
+    """Plot Range×Range-rate phase space - separate figures for each arc length and timestep"""
+    
+    # Group arcs by arc length
+    arc_groups = {}
+    for arc_idx, result_data in all_query_results.items():
+        arc_data, _ = get_arc_data(result_data)
+        dt_days = arc_data['current_dt']
+        
+        # Round to avoid floating point precision issues
+        dt_key = round(dt_days, 3)
+        if dt_key not in arc_groups:
+            arc_groups[dt_key] = []
+        arc_groups[dt_key].append(arc_idx)
+    
+    print(f"Found {len(arc_groups)} arc length groups: {sorted(arc_groups.keys())}")
+    
+    # Get the total time steps from first arc
+    arc_data, _ = get_arc_data(list(all_query_results.values())[0])
+    total_time_steps = len(arc_data['tgrid'])
+    t_prop = arc_data['t_propagation']
+    
+    # Select 6 equally spaced time steps
+    if total_time_steps >= 6:
+        selected_time_indices = np.linspace(0, total_time_steps-1, 6, dtype=int)
+    else:
+        selected_time_indices = np.arange(total_time_steps)  # Use all available if less than 6
+
+    n_time_steps = len(selected_time_indices)
+    
+    # Load true Apophis range data for comparison (will be used for all arc lengths)
+    try:
+        # Get true Apophis ephemeris for the full time range
+        # Note: t_prop is in descending order (backward propagation), so t_prop[-1] is earliest
+        t_earliest = t_prop[-1]  # Last element = earliest time (furthest into past)
+        t_latest = t_prop[0]     # First element = latest time (epoch/observation time)
+        
+        print(f"Loading true Apophis data from {t_earliest.iso} to {t_latest.iso}")
+        
+        eph_true, vec_true = post.load_Apophis_Ephemeris(
+            t_earliest.iso, t_latest.iso, '1h', location = '500'  # Higher resolution for better interpolation
+        )
+        
+        # Convert to range and range-rate at selected time steps
+        apophis_true_obs = []
+        for i, time_idx in enumerate(selected_time_indices):
+            target_time = t_prop[time_idx]
+            
+            # Find closest time in true ephemeris
+            t_true = Time(eph_true['datetime_jd'], format='jd')
+            time_diffs = np.abs((t_true - target_time).sec)
+            closest_true_idx = np.argmin(time_diffs)
+            
+            if time_diffs[closest_true_idx] > 3600:  # More than 1 hour difference
+                print(f"Warning: Large time difference ({time_diffs[closest_true_idx]:.0f}s) for time step {time_idx}")
+            
+            # Calculate range and range-rate from geocentric position and velocity
+            # Assuming vec_true contains geocentric Cartesian coordinates
+          
+                # Position vector (geocentric)
+            x =(vec_true['x'][closest_true_idx]* u.AU).to(u.km).value
+            y = (vec_true['y'][closest_true_idx] * u.AU).to(u.km).value
+            z = (vec_true['z'][closest_true_idx] * u.AU).to(u.km).value
+
+                # Velocity vector (geocentric)
+            vx = (vec_true['vx'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value
+            vy = (vec_true['vy'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value
+            vz = (vec_true['vz'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value
+
+                # Calculate range (distance from Earth center)
+            true_range = (vec_true['range'][closest_true_idx] * u.AU).to(u.km).value  # In km
+                
+                # Calculate range-rate (radial velocity)
+                # range_rate = (r · v) / |r|
+            position_vec = np.array([x, y, z])
+            velocity_vec = np.array([vx, vy, vz])
+            true_range_rate = (vec_true['range_rate'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value  # In km/s
+                
+            
+            apophis_true_obs.append((true_range, true_range_rate))
+        
+    except Exception as e:
+        print(f"Could not load true Apophis range data: {e}")
+        apophis_true_obs = None
+
+    # Create separate figures for each arc length group
+    for dt_days, arc_indices in arc_groups.items():
+        print(f"\nCreating figures for arc length: {dt_days:.3f} days (arcs: {arc_indices})")
+        
+        # Create separate figure for each timestep within this arc length group
+        for i, time_idx in enumerate(selected_time_indices):
+            # Create new figure for this timestep and arc length
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+            
+            # Get target time for this timestep
+            target_time = t_prop[time_idx]
+            time_since_start = (t_prop[0] - target_time).to(u.day).value  # Days into past
+            
+            print(f"  Creating figure {i+1}/{n_time_steps} for timestep {time_idx} (t = {time_since_start:.2f} days)")
+            
+            # Plot each method at this timestep for this arc length group
+            for method_idx, method in enumerate(methods):
+                method_ranges = []
+                method_range_rates = []
+                
+                # Only process arcs in this arc length group
+                for arc_idx in arc_indices:
+                    result_data = all_query_results[arc_idx]
+                    arc_data, _ = get_arc_data(result_data)
+                
+                try:
+                    ranges = []
+                    range_rates = []
+                    
                     # Extract observational data based on method type
                     if 'ADS' in method:
                         # For ADS methods, extract from perimeter evaluation
-                        if method == 'DAIOD_ADS_ADS':
-                            perimeter_data = arc_data['DAIOD_ADS_perimeter']
-                        else:
-                            perimeter_data = arc_data['DAIOD_perimeter']
-                            
-                        if time_idx < len(perimeter_data['final_map']):
-                            manifold = perimeter_data['final_map'][time_idx]
+                        if method == 'DAIOD_ADS_DA':
+                            perimeter_data = arc_data['DAIOD_ADS_DA_perimeter']
+                        # else:
+                        #     perimeter_data = arc_data['DAIOD_perimeter']  # Old DAIOD_ADS method
+
+                        if time_idx < len(perimeter_data[0]):
+                            manifold = perimeter_data[time_idx]
                             # Extract range (element 2) and range-rate (element 5)
                             ranges = manifold[:, 2, :].flatten()  # All ranges
                             range_rates = manifold[:, 5, :].flatten()  # All range-rates
@@ -442,59 +882,306 @@ def plot_range_rangerate_phase_space(all_query_results, methods, method_colors):
                             ranges = ranges[valid_mask]
                             range_rates = range_rates[valid_mask]
                     
-                    # Plot the data
+                    # Collect data for this method
                     if len(ranges) > 0 and len(range_rates) > 0:
-                        ax.scatter(ranges/1e6, range_rates, c=method_colors[method], 
-                                 alpha=0.6, s=2, label=f'{method}' if arc_idx == 0 else "")
+                        method_ranges.extend(ranges)
+                        method_range_rates.extend(range_rates)
                     
                 except Exception as e:
-                    print(f"Error plotting range data for {method} at time {time_idx}: {e}")
+                    print(f"Error extracting range data for {method} at time {time_idx}: {e}")
                     continue
+            
+                # Plot data for this method
+                if len(method_ranges) > 0 and len(method_range_rates) > 0:
+                    ax.scatter(method_ranges, method_range_rates, c=method_colors[method], 
+                            marker='o', alpha=0.6, s=20, 
+                            edgecolors='black', linewidth=0.3,
+                            label=f'{method}')
+                    print(f"  Plotted {len(method_ranges)} points for {method}")
         
-        # Plot true Apophis if available
-        if apophis_true_obs and time_idx < len(apophis_true_obs):
-            true_range, true_range_rate = apophis_true_obs[time_idx]
-            ax.scatter(true_range/1e6, true_range_rate, c='black', marker='*', 
-                      s=100, label='True Apophis', zorder=10)
+                # Plot true Apophis at this timestep if available
+                if apophis_true_obs and i < len(apophis_true_obs):
+                    true_range, true_range_rate = apophis_true_obs[i]
+                    if true_range is not None and true_range_rate is not None:
+                        ax.scatter(true_range, true_range_rate, c='black', marker='*', 
+                                s=200, zorder=10, 
+                                edgecolors='white', linewidth=1)
+            
+                ax.set_xlabel('Range [km]')
+                ax.set_ylabel('Range Rate [km/s]')
+                ax.set_title(f'Range×Range-rate Phase Space - All Methods\nArc Length: {dt_days:.3f} days | Time: {target_time.iso} ({time_since_start:.2f} days)')
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+                
+            plt.tight_layout()
+            
+            # Save the figure
+            time_str = target_time.iso[:19].replace(':', '-')
+            filename = f"range_rangerate_all_methods_arc_{dt_days:.3f}d_time{i+1}_{time_str}"
+            filepath = generate_plot_filename('range_rangerate/all_methods', filename, timestamp=False)
+            save_figure_with_metadata(fig, filepath)
+            
+            plt.show()
+    
+    total_figures = len(arc_groups) * n_time_steps
+    print(f"Completed {total_figures} range×range-rate plots ({len(arc_groups)} arc lengths × {n_time_steps} timesteps)")
+    return None  # Multiple figures, no single figure to return
+
+def plot_range_rangerate_no_daiod_da(all_query_results, methods, method_colors):
+    """Plot Range×Range-rate phase space without DAIOD_DA method - separate figures for each arc length and timestep"""
+    
+    # Filter out DAIOD_DA from methods
+    filtered_methods = [method for method in methods if method != 'DAIOD_DA']
+    
+    if not filtered_methods:
+        print("No methods available after filtering out DAIOD_DA")
+        return
+    
+    # Group arcs by arc length
+    arc_groups = {}
+    for arc_idx, result_data in all_query_results.items():
+        arc_data, _ = get_arc_data(result_data)
+        dt_days = arc_data['current_dt']
         
-        ax.set_xlabel('Range [Mm]')
-        ax.set_ylabel('Range Rate [km/s]')
-        ax.set_title(f'Range×Range-rate Phase Space - Time {time_idx}')
-        ax.grid(True, alpha=0.3)
-        if time_idx == 0:
-            ax.legend()
+        # Round to avoid floating point precision issues
+        dt_key = round(dt_days, 3)
+        if dt_key not in arc_groups:
+            arc_groups[dt_key] = []
+        arc_groups[dt_key].append(arc_idx)
     
-    # Hide unused subplots
-    for i in range(n_time_steps, len(axes)):
-        axes[i].set_visible(False)
+    print(f"Found {len(arc_groups)} arc length groups: {sorted(arc_groups.keys())}")
     
-    plt.tight_layout()
-    plt.show()
+    # Get the total time steps from first arc
+    arc_data, _ = get_arc_data(list(all_query_results.values())[0])
+    total_time_steps = len(arc_data['tgrid'])
+    t_prop = arc_data['t_propagation']
+    
+    # Select 6 equally spaced time steps (same as main function)
+    if total_time_steps >= 6:
+        selected_time_indices = np.linspace(0, total_time_steps-1, 6, dtype=int)
+    else:
+        selected_time_indices = np.arange(total_time_steps)  # Use all available if less than 6
+
+    n_time_steps = len(selected_time_indices)
+    
+    # Load true Apophis range data for comparison (will be used for all arc lengths)
+    try:
+        # Get true Apophis ephemeris for the full time range
+        # Note: t_prop is in descending order (backward propagation), so t_prop[-1] is earliest
+        t_earliest = t_prop[-1]  # Last element = earliest time (furthest into past)
+        t_latest = t_prop[0]     # First element = latest time (epoch/observation time)
+        
+        print(f"Loading true Apophis data from {t_earliest.iso} to {t_latest.iso}")
+        
+        eph_true, vec_true = post.load_Apophis_Ephemeris(
+            t_earliest.iso, t_latest.iso, '1h', location = '500'  # Higher resolution for better interpolation
+        )
+        
+        # Convert to range and range-rate at selected time steps
+        apophis_true_obs = []
+        for i, time_idx in enumerate(selected_time_indices):
+            target_time = t_prop[time_idx]
+            
+            # Find closest time in true ephemeris
+            t_true = Time(eph_true['datetime_jd'], format='jd')
+            time_diffs = np.abs((t_true - target_time).sec)
+            closest_true_idx = np.argmin(time_diffs)
+            
+            if time_diffs[closest_true_idx] > 3600:  # More than 1 hour difference
+                print(f"Warning: Large time difference ({time_diffs[closest_true_idx]:.0f}s) for time step {time_idx}")
+            
+            # Calculate range and range-rate from geocentric position and velocity
+            # Assuming vec_true contains geocentric Cartesian coordinates
+          
+                # Position vector (geocentric)
+            x =(vec_true['x'][closest_true_idx]* u.AU).to(u.km).value
+            y = (vec_true['y'][closest_true_idx] * u.AU).to(u.km).value
+            z = (vec_true['z'][closest_true_idx] * u.AU).to(u.km).value
+
+                # Velocity vector (geocentric)
+            vx = (vec_true['vx'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value
+            vy = (vec_true['vy'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value
+            vz = (vec_true['vz'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value
+
+                # Calculate range (distance from Earth center)
+            true_range = (vec_true['range'][closest_true_idx] * u.AU).to(u.km).value  # In km
+                
+                # Calculate range-rate (radial velocity)
+                # range_rate = (r · v) / |r|
+            position_vec = np.array([x, y, z])
+            velocity_vec = np.array([vx, vy, vz])
+            true_range_rate = (vec_true['range_rate'][closest_true_idx] * u.AU/u.day).to(u.km/u.s).value  # In km/s
+                
+            
+            apophis_true_obs.append((true_range, true_range_rate))
+        
+    except Exception as e:
+        print(f"Could not load true Apophis range data: {e}")
+        apophis_true_obs = None
+    
+    # Create separate figures for each arc length group (excluding DAIOD_DA)
+    for dt_days, arc_indices in arc_groups.items():
+        print(f"\nCreating figures for arc length: {dt_days:.3f} days (arcs: {arc_indices}) - Without DAIOD_DA")
+        
+        # Create separate figure for each timestep within this arc length group
+        for i, time_idx in enumerate(selected_time_indices):
+            # Create new figure for this timestep and arc length
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+            
+            # Get target time for this timestep
+            target_time = t_prop[time_idx]
+            time_since_start = (t_prop[0] - target_time).to(u.day).value  # Days into past
+            
+            print(f"  Creating figure {i+1}/{n_time_steps} for timestep {time_idx} (t = {time_since_start:.2f} days)")
+            
+            # Plot each method at this timestep for this arc length group (excluding DAIOD_DA)
+            for method_idx, method in enumerate(filtered_methods):
+                method_ranges = []
+                method_range_rates = []
+                
+                # Only process arcs in this arc length group
+                for arc_idx in arc_indices:
+                    result_data = all_query_results[arc_idx]
+                    arc_data, _ = get_arc_data(result_data)
+                
+                try:
+                    ranges = []
+                    range_rates = []
+                    
+                    # Extract observational data based on method type
+                    if 'ADS' in method:
+                        # For ADS methods, extract from perimeter evaluation
+                        if method == 'DAIOD_ADS_DA':
+                            perimeter_data = arc_data['DAIOD_ADS_DA_perimeter']
+                        # else:
+                        #     perimeter_data = arc_data['DAIOD_perimeter']  # Old DAIOD_ADS method
+
+                        if time_idx < len(perimeter_data[0]):
+                            manifold = perimeter_data[time_idx]
+                            # Extract range (element 2) and range-rate (element 5)
+                            ranges = manifold[:, 2, :].flatten()  # All ranges
+                            range_rates = manifold[:, 5, :].flatten()  # All range-rates
+                            
+                            # Remove invalid points
+                            valid_mask = np.isfinite(ranges) & np.isfinite(range_rates)
+                            ranges = ranges[valid_mask]
+                            range_rates = range_rates[valid_mask]
+                            
+                    elif method == 'DAIOD_DA':
+                        # For DA method, extract from DA perimeter (this won't be executed since DAIOD_DA is filtered out)
+                        if time_idx < len(arc_data['DAIOD_DA_perimeter']):
+                            da_points = arc_data['DAIOD_DA_perimeter'][time_idx]
+                            ranges = da_points[:, 2, 0]  # Range component
+                            range_rates = da_points[:, 5, 0]  # Range-rate component
+                            
+                    else:
+                        # For MC methods, extract from propagated observational data
+                        if method == 'DAIOD_MC':
+                            obs_data = arc_data['X_DAIOD_MC_geocentric_obs']
+                        else:  # GAUSS_MC
+                            obs_data = arc_data['X_GAUSS_MC_geocentric_obs']
+                            
+                        if time_idx < obs_data.shape[2]:
+                            ranges = obs_data[:, 2, time_idx]  # All samples, range component
+                            range_rates = obs_data[:, 5, time_idx]  # All samples, range-rate component
+                            
+                            # Remove invalid points
+                            valid_mask = np.isfinite(ranges) & np.isfinite(range_rates)
+                            ranges = ranges[valid_mask]
+                            range_rates = range_rates[valid_mask]
+                    
+                    # Collect data for this method
+                    if len(ranges) > 0 and len(range_rates) > 0:
+                        method_ranges.extend(ranges)
+                        method_range_rates.extend(range_rates)
+                    
+                except Exception as e:
+                    print(f"Error extracting range data for {method} at time {time_idx}: {e}")
+                    continue
+            
+                # Plot data for this method
+                if len(method_ranges) > 0 and len(method_range_rates) > 0:
+                    ax.scatter(method_ranges, method_range_rates, c=method_colors[method], 
+                            marker='o', alpha=0.6, s=20, 
+                            edgecolors='black', linewidth=0.3,
+                            label=f'{method}')
+                    print(f"  Plotted {len(method_ranges)} points for {method}")
+        
+                # Plot true Apophis at this timestep if available
+                if apophis_true_obs and i < len(apophis_true_obs):
+                    true_range, true_range_rate = apophis_true_obs[i]
+                    if true_range is not None and true_range_rate is not None:
+                        ax.scatter(true_range, true_range_rate, c='black', marker='*', 
+                                s=200, zorder=10, 
+                                edgecolors='white', linewidth=1)
+            
+                ax.set_ylabel('Range Rate [km/s]')
+                ax.set_title(f'Range×Range-rate Phase Space - Without DAIOD_DA\nArc Length: {dt_days:.3f} days | Time: {target_time.iso} ({time_since_start:.2f} days)')
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+            
+            plt.tight_layout()
+            
+            # Save the figure
+            time_str = target_time.iso[:19].replace(':', '-')
+            filename = f"range_rangerate_no_daiod_da_arc_{dt_days:.3f}d_time{i+1}_{time_str}"
+            filepath = generate_plot_filename('range_rangerate/no_daiod_da', filename, timestamp=False)
+            save_figure_with_metadata(fig, filepath)
+            
+            plt.show()
+    
+    total_figures = len(arc_groups) * n_time_steps
+    print(f"Completed {total_figures} range×range-rate plots without DAIOD_DA ({len(arc_groups)} arc lengths × {n_time_steps} timesteps)")
+    return None  # Multiple figures, no single figure to return
 
 def plot_ads_split_history(all_query_results):
     """Plot ADS domain split history over propagation time"""
     
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    ads_methods = ['DAIOD_ADS_ADS', 'DAIOD_ADS']
-    colors = ['red', 'blue']
+    ads_methods = ['DAIOD_ADS_DA']  # Updated to match stored structure
+    # ads_methods = ['DAIOD_ADS_ADS', 'DAIOD_ADS']  # Old ADS methods
+    colors = ['red']
+    
+    # Method marker shapes (matching alphashape area plots)
+    method_markers = {
+        'DAIOD_ADS_DA': 'o',       # Circle
+    }
+    # method_markers = {
+    #     'DAIOD_ADS_ADS': 'o',      # Circle
+    #     'DAIOD_ADS': 's',          # Square
+    # }  # Old method markers
+    
+    # Method line styles (matching alphashape area plots)
+    method_linestyles = {
+        'DAIOD_ADS_DA': '--',      # Dashed
+    }
+    # method_linestyles = {
+    #     'DAIOD_ADS_ADS': '--',     # Dashed
+    #     'DAIOD_ADS': '-.',         # Dash-dot
+    # }  # Old method line styles
     
     for arc_idx, result_data in all_query_results.items():
         arc_data, _ = get_arc_data(result_data)
         tgrid = arc_data['tgrid']
         prop_times_days = (arc_data['t_propagation'] - arc_data['t_propagation'][0]).to(u.day).value
         
+        # Convert to absolute delta t (0 at left, increasing to right)
+        abs_delta_t_days = np.abs(prop_times_days)
+        
         for method_idx, method in enumerate(ads_methods):
             try:
-                if method == 'DAIOD_ADS_ADS':
+                if method == 'DAIOD_ADS_DA':
                     final_lists = arc_data['final_lists_ADS']
-                else:
-                    final_lists = arc_data['final_lists_ADS_DAIOD']
+                # else:
+                #     final_lists = arc_data['final_lists_ADS_DAIOD']  # Old DAIOD_ADS method
                 
                 nsplits = [len(domains) for domains in final_lists]
                 
-                ax.plot(prop_times_days[:len(nsplits)], nsplits, 
-                       color=colors[method_idx], marker='o', 
+                ax.plot(abs_delta_t_days[:len(nsplits)], nsplits, 
+                       color=colors[method_idx], 
+                       marker=method_markers[method],
+                       linestyle=method_linestyles[method],
                        label=f'{method} (Arc {arc_idx})', linewidth=2)
                 
             except Exception as e:
@@ -505,6 +1192,11 @@ def plot_ads_split_history(all_query_results):
     ax.set_title('ADS Domain Split History')
     ax.grid(True, alpha=0.3)
     ax.legend()
+    
+    # Save the figure
+    filepath = generate_plot_filename('ads_split_history', 'ads_domain_split_history', timestamp=False)
+    save_figure_with_metadata(fig, filepath)
+    
     plt.show()
 
 def plot_wall_clock_comparison(df, methods):
@@ -515,6 +1207,8 @@ def plot_wall_clock_comparison(df, methods):
         'od_time': 'mean',
         'prop_time': 'mean', 
         'eval_time': 'mean',
+        'conversion_time': 'mean',
+        'alphashape_time': 'mean',
         'query_time': 'mean'
     }).reset_index()
     
@@ -525,10 +1219,10 @@ def plot_wall_clock_comparison(df, methods):
     width = 0.6
     
     bottom = np.zeros(len(methods))
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
-    labels = ['Orbit Determination', 'Propagation', 'Evaluation', 'Query']
-    
-    for i, (col, color, label) in enumerate(zip(['od_time', 'prop_time', 'eval_time', 'query_time'], 
+    colors = ['#1f77b4', "#ff7700", '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    labels = ['Orbit Determination', 'Propagation', 'Evaluation', 'Query', 'Conversion', 'AlphaShape']
+
+    for i, (col, color, label) in enumerate(zip(['od_time', 'prop_time', 'eval_time', 'query_time', 'conversion_time', 'alphashape_time'], 
                                                colors, labels)):
         values = [method_times[method_times['method'] == method][col].iloc[0] 
                  if len(method_times[method_times['method'] == method]) > 0 else 0 
@@ -546,65 +1240,198 @@ def plot_wall_clock_comparison(df, methods):
     ax.grid(True, alpha=0.3, axis='y')
     
     plt.tight_layout()
+    
+    # Save the first figure
+    filepath1 = generate_plot_filename('wall_clock_time', 'computation_time_breakdown_with_alphashape', timestamp=False)
+    save_figure_with_metadata(fig, filepath1)
+    
+    plt.show()
+    
+    # Create second bar chart excluding alphashape_time
+    fig2, ax2 = plt.subplots(figsize=(12, 8))
+    
+    bottom2 = np.zeros(len(methods))
+    colors2 = ['#1f77b4', "#ff7700", '#2ca02c', '#d62728']
+    labels2 = ['Orbit Determination', 'Propagation', 'Conversion', 'Query']
+
+    for i, (col, color, label) in enumerate(zip(['od_time', 'prop_time', 'conversion_time', 'query_time'], 
+                                               colors2, labels2)):
+        values = [method_times[method_times['method'] == method][col].iloc[0] 
+                 if len(method_times[method_times['method'] == method]) > 0 else 0 
+                 for method in methods]
+        
+        ax2.bar(x, values, width, bottom=bottom2, label=label, color=color)
+        bottom2 += values
+    
+    ax2.set_xlabel('Method')
+    ax2.set_ylabel('Wall Clock Time [s]')
+    ax2.set_title('Computation Time Breakdown by Method (Excluding AlphaShape)')
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(methods, rotation=45, ha='right')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    
+    # Save the second figure
+    filepath2 = generate_plot_filename('wall_clock_time', 'computation_time_breakdown_no_alphashape', timestamp=False)
+    save_figure_with_metadata(fig2, filepath2)
+    
     plt.show()
 
 def plot_precision_vs_walltime_scatter(df, method_colors, method_markers):
-    """Plot precision vs wall clock time scatter (Pareto analysis)"""
+    """Plot True Positive Rate vs wall clock time scatter with multi-dimensional encoding"""
     
     fig, ax = plt.subplots(figsize=(12, 8))
     
-    for method in df['method'].unique():
-        method_data = df[df['method'] == method]
-        
-        ax.scatter(method_data['total_wall_time'], method_data['precision'],
-                  c=method_colors[method], marker=method_markers[method], 
-                  s=60, alpha=0.7, label=method, edgecolors='black', linewidth=0.5)
+    # Get unique values for mapping
+    arc_lengths = sorted(df['dt_days'].unique())
+    prop_horizons = sorted(df['prop_time_days'].unique(), key=abs)  # Sort by absolute value
+    methods = sorted(df['method'].unique())
     
-    ax.set_xlabel('Total Wall Clock Time [s]')
+    print(f"Arc lengths found: {arc_lengths}")
+    print(f"Propagation horizons found: {[f'{h:.2f}' for h in prop_horizons]}")
+    print(f"Methods found: {methods}")
+    
+    # Calculate wall time excluding query time (OD + Prop + Eval only)
+    df_plot = df.copy()
+    df_plot['wall_time_no_query'] = df_plot['od_time'] + df_plot['prop_time'] + df_plot['eval_time']
+    df_plot['abs_prop_time_days'] = np.abs(df_plot['prop_time_days'])
+    
+    # Create size mapping for arc lengths
+    min_size, max_size = 20, 120
+    if len(arc_lengths) == 1:
+        arc_size_map = {arc_lengths[0]: (min_size + max_size) / 2}
+    else:
+        min_arc, max_arc = min(arc_lengths), max(arc_lengths)
+        arc_size_map = {}
+        for arc_length in arc_lengths:
+            if max_arc == min_arc:
+                arc_size_map[arc_length] = (min_size + max_size) / 2
+            else:
+                normalized = (arc_length - min_arc) / (max_arc - min_arc)
+                arc_size_map[arc_length] = min_size + (max_size - min_size) * normalized
+    
+    # Plot individual points with method-specific colors and markers
+    for _, row in df_plot.iterrows():
+        ax.scatter(row['wall_time_no_query'], row['precision'],
+                  c=method_colors[row['method']], 
+                  marker=method_markers[row['method']], 
+                  s=arc_size_map[row['dt_days']], 
+                  alpha=0.7, 
+                  edgecolors='black', linewidth=0.5)
+    
+    # Create legend elements
+    legend_elements = []
+    
+    # Method legend (shapes and colors)
+    legend_elements.append(plt.scatter([], [], c='white', marker='o', s=0, 
+                                     label='Methods:', alpha=0))
+    for method in methods:
+        legend_elements.append(plt.scatter([], [], c=method_colors[method], 
+                                         marker=method_markers[method], s=60, 
+                                         alpha=0.7, edgecolors='black', linewidth=0.5,
+                                         label=method))
+    
+    # Arc length legend (sizes) - show representative sizes
+    legend_elements.append(plt.scatter([], [], c='white', marker='o', s=0, 
+                                     label='Arc Lengths (Sizes):', alpha=0))
+    # Show min, mid, and max arc length sizes
+    sample_arc_lengths = [arc_lengths[0], arc_lengths[len(arc_lengths)//2], arc_lengths[-1]] if len(arc_lengths) >= 3 else arc_lengths
+    for arc_length in sample_arc_lengths:
+        legend_elements.append(plt.scatter([], [], c='gray', marker='o', 
+                                         s=arc_size_map[arc_length], alpha=0.7,
+                                         edgecolors='black', linewidth=0.5,
+                                         label=f'{arc_length:.3f} days'))
+    
+    ax.set_xlabel('Wall Clock Time [s] (excluding Query)')
     ax.set_ylabel('Precision')
-    ax.set_title('Precision vs Computational Cost (Pareto Analysis)')
+    ax.set_title('Precision vs Computational Cost\n(Shape/Color=Method, Size=Arc Length)')
     ax.grid(True, alpha=0.3)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     
-    # Add trend line for each method
-    for method in df['method'].unique():
-        method_data = df[df['method'] == method]
-        if len(method_data) > 1:
-            z = np.polyfit(method_data['total_wall_time'], method_data['precision'], 1)
-            p = np.poly1d(z)
-            x_trend = np.linspace(method_data['total_wall_time'].min(), 
-                                method_data['total_wall_time'].max(), 100)
-            ax.plot(x_trend, p(x_trend), '--', color=method_colors[method], alpha=0.5)
+    # Place legend outside plot
+    ax.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1), loc='upper left', 
+              fontsize=9, framealpha=0.9)
     
     plt.tight_layout()
+    
+    # Save the figure
+    filepath = generate_plot_filename('precision_scatter', 'precision_vs_walltime_scatter', timestamp=False)
+    save_figure_with_metadata(fig, filepath)
+    
     plt.show()
 
 def plot_cumulative_walltime(df, methods, method_colors):
-    """Plot cumulative wall clock time vs propagation time"""
+    """Plot wall clock time segments vs arc length - separate figure for each time segment"""
     
-    fig, ax = plt.subplots(figsize=(12, 8))
+    # Method line styles (matching alphashape area plots)
+    method_linestyles = {
+        'DAIOD_ADS_DA': '--',      # Dashed
+        'DAIOD_DA': ':',           # Dotted
+        'DAIOD_MC': '-',           # Solid
+        'GAUSS_MC': '-.'           # Dash-dot
+    }
     
-    for method in methods:
-        method_data = df[df['method'] == method].sort_values(['arc_index', 'prop_time_days'])
+    # Method titles for legend
+    method_titles = {
+        'DAIOD_ADS_DA': 'DAIOD+ADS OD, DA propagation',
+        'DAIOD_DA': 'DAIOD OD, DA propagation',
+        'DAIOD_MC': 'DAIOD Monte Carlo OD, Pointwise Propagation',
+        'GAUSS_MC': 'Gauss Monte Carlo OD, Pointwise Propagation'
+    }
+    
+    # Define time segments to plot
+    time_segments = {
+        'od_time': 'Orbit Determination Time',
+        'prop_time': 'Propagation Time', 
+        'eval_time': 'Evaluation Time',
+        'conversion_time': 'Conversion Time',
+        'alphashape_time': 'AlphaShape Time'
+    }
+    
+    # Get unique arc lengths and sort them
+    arc_lengths = sorted(df['dt_days'].unique())
+    
+    # Create separate figure for each time segment
+    for time_col, time_label in time_segments.items():
+        plt.figure(figsize=(12, 8))
+        plt.title(f'{time_label} vs Arc Length', fontsize=14, pad=20)
         
-        # Group by arc and calculate cumulative time
-        for arc_idx in method_data['arc_index'].unique():
-            arc_data = method_data[method_data['arc_index'] == arc_idx]
+        # Plot each method as a line
+        for method in methods:
+            method_data = df[df['method'] == method]
             
-            cumulative_time = arc_data['total_wall_time'].cumsum()
+            # Calculate mean time for each arc length
+            arc_times = []
+            for arc_length in arc_lengths:
+                arc_method_data = method_data[method_data['dt_days'] == arc_length]
+                if len(arc_method_data) > 0:
+                    mean_time = arc_method_data[time_col].mean()
+                    arc_times.append(mean_time)
+                else:
+                    arc_times.append(0)
             
-            ax.plot(arc_data['prop_time_days'], cumulative_time, 
-                   color=method_colors[method], marker='o', 
-                   label=f'{method} (Arc {arc_idx})', linewidth=2, markersize=4)
-    
-    ax.set_xlabel('Propagation Time [days]')
-    ax.set_ylabel('Cumulative Wall Clock Time [s]')
-    ax.set_title('Cumulative Computational Cost Over Time')
-    ax.grid(True, alpha=0.3)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    
-    plt.tight_layout()
-    plt.show()
+            # Plot the line for this method
+            plt.plot(arc_lengths, arc_times,
+                   color=method_colors[method], 
+                   linestyle=method_linestyles.get(method, '-'),
+                   label=method_titles.get(method, method), 
+                   linewidth=2.5, alpha=0.8,
+                   marker='o', markersize=6)
+        
+        plt.xlabel('Arc Length [days]')
+        plt.ylabel('Wall Clock Time [s]')
+        plt.grid(True, alpha=0.3)
+        plt.legend(loc='best')
+        
+        plt.tight_layout()
+        
+        # Save the figure
+        filename = f"cumulative_walltime_{time_col}_{time_label.replace(' ', '_').replace('[', '_').replace(']', '')}"
+        filepath = generate_plot_filename('cumulative_walltime', filename, timestamp=False)
+        save_figure_with_metadata(plt.gcf(), filepath)
+        
+        plt.show()
 
 def plot_orbital_motion_validation(all_query_results, methods, method_colors):
     """Plot motion in orbital frame to validate physical consistency
@@ -666,10 +1493,10 @@ def plot_orbital_motion_validation(all_query_results, methods, method_colors):
                 # Extract observational data based on method type and convert to orbital
                 if 'ADS' in method:
                     # For ADS methods, extract from perimeter evaluation
-                    if method == 'DAIOD_ADS_ADS':
+                    if method == 'DAIOD_ADS_DA':
                         perimeter_data = arc_data['DAIOD_ADS_perimeter']
-                    else:
-                        perimeter_data = arc_data['DAIOD_perimeter']
+                    # else:
+                    #     perimeter_data = arc_data['DAIOD_perimeter']  # Old DAIOD_ADS method
                         
                     for time_idx in range(len(perimeter_data['final_map'])):
                         if time_idx >= earth_pos.shape[1]:
@@ -791,11 +1618,77 @@ def plot_orbital_motion_validation(all_query_results, methods, method_colors):
         axes[i].set_visible(False)
     
     plt.tight_layout()
+    
+    # Save the figure
+    filepath = generate_plot_filename('orbital_motion', 'heliocentric_perifocal_motion_validation', timestamp=False)
+    save_figure_with_metadata(fig, filepath)
+    
     plt.show()
+
+def fit_uncertainty_growth_models(x, y):
+    """
+    Fit models specifically designed for uncertainty growth patterns
+    """
+    from scipy.optimize import curve_fit
+    from sklearn.metrics import r2_score
+    
+    models = {}
+    
+    # 1. Linear growth: area = a + b*t
+    try:
+        def linear_model(t, a, b):
+            return a + b * t
+        popt, _ = curve_fit(linear_model, x, y)
+        models['linear_growth'] = (linear_model, popt, r2_score(y, linear_model(x, *popt)))
+    except:
+        pass
+    
+    # 2. Quadratic growth: area = a + b*t + c*t²
+    try:
+        def quadratic_model(t, a, b, c):
+            return a + b * t + c * t**2
+        popt, _ = curve_fit(quadratic_model, x, y)
+        models['quadratic_growth'] = (quadratic_model, popt, r2_score(y, quadratic_model(x, *popt)))
+    except:
+        pass
+    
+    # 3. Exponential growth: area = a * exp(b*t)
+    try:
+        def exponential_model(t, a, b):
+            return a * np.exp(b * t)
+        # Use log-linear fit as initial guess
+        log_y = np.log(np.abs(y) + 1e-10)
+        coeffs = np.polyfit(x, log_y, 1)
+        p0 = [np.exp(coeffs[1]), coeffs[0]]
+        popt, _ = curve_fit(exponential_model, x, y, p0=p0)
+        models['exponential_growth'] = (exponential_model, popt, r2_score(y, exponential_model(x, *popt)))
+    except:
+        pass
+    
+    # 4. Power law growth: area = a * t^b
+    try:
+        def power_model(t, a, b):
+            return a * (t + 1e-6)**b  # Add small offset to avoid t=0
+        # Use log-log fit as initial guess
+        log_x = np.log(x + 1e-6)
+        log_y = np.log(np.abs(y) + 1e-10)
+        coeffs = np.polyfit(log_x, log_y, 1)
+        p0 = [np.exp(coeffs[1]), coeffs[0]]
+        popt, _ = curve_fit(power_model, x, y, p0=p0)
+        models['power_growth'] = (power_model, popt, r2_score(y, power_model(x, *popt)))
+    except:
+        pass
+    
+    # Select best model
+    if models:
+        best_name = max(models.keys(), key=lambda k: models[k][2])
+        return models[best_name], best_name, models
+    else:
+        return None, None, {}
 
 def main():
     """Main plotting function"""
-    
+    import time
     print("=== Apophis Results Plotting ===")
     
     # Load query results
@@ -808,31 +1701,56 @@ def main():
     print(f"Loaded data: {len(df)} records across {len(methods)} methods")
     
     # Generate all plots
-    print("\n1. Generating parameter space heatmaps...")
-    plot_parameter_heatmaps(df, methods)
+    #print("\n1. Generating parameter space heatmaps...")
+    #plot_parameter_heatmaps(df, methods)
     
-    print("2. Generating RA×DEC propagation plots...")
-    plot_radec_propagation(all_query_results, methods, method_colors)
-    
-    print("3. Generating Range×Range-rate phase space plots...")
+    time_ref = time.time()
+    print("2. Generating RA×DEC propagation plots (52 equally spaced time steps)...")
+    # RA×DEC plots will automatically use 52 equally spaced time steps
+    plot_radec_propagation(all_query_results, methods, method_colors)  # Every 86400 seconds (~1 day if 1h steps)
+    time_elapsed = time.time() - time_ref
+    print(f"RAxDEC plotting time: {time_elapsed} seconds")
+    print("RAxDEC plots complete.")
+
+
+    #print("3. Generating alphashape area evolution plots...") # Validated
+    time_ref = time.time()
+    plot_alphashape_area(all_query_results, methods, method_colors)
+    time_elapsed = time.time() - time_ref
+    print(f"Alphashape area plotting time: {time_elapsed} seconds")
+    print("Alphashape area plots complete.")
+
+    time_ref = time.time()
+    print("4. Generating Range×Range-rate phase space plots (12 equally spaced time steps)...")
+    print("4a. All methods including DAIOD_DA...")
     plot_range_rangerate_phase_space(all_query_results, methods, method_colors)
+    print("4b. Without DAIOD_DA (MC methods only)...")
+    plot_range_rangerate_no_daiod_da(all_query_results, methods, method_colors)
+    time_elapsed = time.time() - time_ref
+    print(f"Range×Range-rate plotting time: {time_elapsed} seconds")
+    print("Range×Range-rate plots complete.")
+    #print("4. Generating ADS split history...") #Needs testing (re-run sim with 2 splits)
+    #plot_ads_split_history(all_query_results)
     
-    print("4. Generating ADS split history...")
-    plot_ads_split_history(all_query_results)
-    
-    print("5. Generating wall clock time comparison...")
+    #print("5. Generating wall clock time comparison...") # validated
+    time_ref = time.time()
     plot_wall_clock_comparison(df, methods)
+    time_elapsed = time.time() - time_ref
+    print(f"Wall clock time plotting time: {time_elapsed} seconds")
+    print(f"Wall clock time comparison complete.")
+    #print("6. Generating precision vs wall time scatter...")        # validated
+    #plot_precision_vs_walltime_scatter(df, method_colors, method_markers)
     
-    print("6. Generating precision vs wall time scatter...")
-    plot_precision_vs_walltime_scatter(df, method_colors, method_markers)
+    #print("7. Generating cumulative wall time plot...") -> Cannot be done as only have final computional times for different arcs
+    time_ref = time.time()
+    plot_cumulative_walltime(df, methods, method_colors) # Validated
+    time_elapsed = time.time() - time_ref
+    print(f"Cumulative wall time plotting time: {time_elapsed} seconds")
+    print(f"Cumulative wall time plots complete.")
+    #print("8. Generating orbital motion validation...")
+    #plot_orbital_motion_validation(all_query_results, methods, method_colors)
     
-    print("7. Generating cumulative wall time plot...")
-    plot_cumulative_walltime(df, methods, method_colors)
-    
-    print("8. Generating orbital motion validation...")
-    plot_orbital_motion_validation(all_query_results, methods, method_colors)
-    
-    print("\n=== Plotting Complete ===")
+    #print("\n=== Plotting Complete ===")
 
 if __name__ == "__main__":
     main()

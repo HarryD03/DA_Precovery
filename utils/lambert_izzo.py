@@ -138,14 +138,12 @@ def findxy(L: Union[DA, float], T: Union[DA,float], M) -> Union[array,NDArray]:
     :returns :y_list List of y solutions.  [vector: Nx1] N x's depend on number of revolutions in transfer 
     """
     if isinstance(T, float):
-        print("Algorithm 2 ENTERING NUMPY BRANCH")
         assert isinstance(L, float), "Must be Numpy"
         assert abs(L) < 1, "Lambda Variable must be less than 1"
         assert T > 0, "Standard time parameter must be posiitve"        #Mistake on original paper
         T_cons = T
 
     if isinstance(T, DA):
-        print("Algorithm 2 ENTERING DA BRANCH")
         assert isinstance(L, DA), "Must be DA"
         assert abs(L.cons()) < 1, "Lambda Variable must be less than 1"
         assert T.cons() > 0, "Standard time parameter must be positive"

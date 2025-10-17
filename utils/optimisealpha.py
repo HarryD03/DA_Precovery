@@ -47,7 +47,7 @@ def _testalpha(points: Union[List[Tuple[float]], np.ndarray], alpha: float):
 
 
 def optimizealpha(points: Union[List[Tuple[float]], np.ndarray],
-                  max_iterations: int = 5000, lower: float = 0.,
+                  max_iterations: int = 100, lower: float = 0.,
                   upper: float = 100000., silent: bool = False):
     """
     Solve for the alpha parameter.
